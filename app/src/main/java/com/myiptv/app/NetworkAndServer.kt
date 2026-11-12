@@ -36,14 +36,21 @@ object NetworkLoader {
         .build()
 
     private val attrRegex = Regex("([a-zA-Z0-9_-]+)=\"([^\"]*)\"")
-    private val vportalRegex = Regex("^portal::\\[key:([^\\]]+)\\](https?://.+)$", RegexOption.IGNORE_CASE)
+    private val keyExtractRegex = Regex("\\[key:([^\\]]+)\\]", RegexOption.IGNORE_CASE)
+    private val urlExtractRegex = Regex("(https?://[^\\s\"'\\]]+)", RegexOption.IGNORE_CASE)
     private const val OTT_UA = "Mozilla/5.0 (SmartHub; SMART-TV; U; Linux/SmartTV) AppleWebKit/531.2+ OttPlayer/2.0"
 
+    // Умное извлечение ключа и http-адреса даже если вокруг есть лишний текст
     fun parseVPortalCredentials(rawUrl: String): Pair<String, String> {
-        val match = vportalRegex.find(rawUrl.trim())
-        val key = match?.groupValues?.get(1)?.trim() ?: ""
-        var baseUrl = match?.groupValues?.get(2)?.trim() ?: rawUrl.trim()
-        if (!baseUrl.endsWith("/")) baseUrl += "/"
+        val keyMatch = keyExtractRegex.find(rawUrl)
+        val urlMatch = urlExtractRegex.find(rawUrl)
+
+        val key = keyMatch?.groupValues?.get(1)?.trim() ?: ""
+        var baseUrl = urlMatch?.groupValues?.get(1)?.trim() ?: ""
+
+        if (baseUrl.isNotEmpty() && !baseUrl.endsWith("/")) {
+            baseUrl += "/"
+        }
         return key to baseUrl
     }
 
@@ -53,7 +60,8 @@ object NetworkLoader {
         var embeddedEpgUrl: String? = null
 
         runCatching {
-            val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
+            val cleanUrl = urlExtractRegex.find(url)?.groupValues?.get(1) ?: url.trim()
+            val req = Request.Builder().url(cleanUrl).header("User-Agent", "Mozilla/5.0").build()
             client.newCall(req).execute().use { resp ->
                 val stream = resp.body?.byteStream() ?: return@use
                 val reader = BufferedReader(InputStreamReader(stream, Charsets.UTF_8))
@@ -112,7 +120,6 @@ object NetworkLoader {
         M3uParseResult(channels, movies, embeddedEpgUrl)
     }
 
-    // Загрузка корня или любой папки/категории/фильма VPortal через POST JSON
     suspend fun loadVPortalNode(
         rawPortalUrl: String,
         customTargetUrl: String? = null,
@@ -124,7 +131,11 @@ object NetworkLoader {
 
         runCatching {
             val (key, baseUrl) = parseVPortalCredentials(rawPortalUrl)
-            val targetUrl = customTargetUrl?.takeIf { it.isNotBlank() } ?: baseUrl
+            val targetUrl = customTargetUrl?.takeIf { it.startsWith("http") } ?: baseUrl
+
+            if (!targetUrl.startsWith("http")) {
+                return@withContext emptyList<VodMovie>() to "В поле VPortal нет ссылки http://! Очистите поле крестиком и вставьте ссылку portal::[key:...]http://..."
+            }
 
             val reqObj = if (!customRequestJson.isNullOrBlank()) {
                 runCatching { JSONObject(customRequestJson) }.getOrElse { JSONObject() }
@@ -149,7 +160,7 @@ object NetworkLoader {
 
             client.newCall(request).execute().use { resp ->
                 val body = resp.body?.string()?.trim() ?: ""
-                diagnostic = "HTTP ${resp.code} | Sent: $payloadStr | Resp: " + body.take(350).replace("\n", " ")
+                diagnostic = "HTTP ${resp.code} | Sent: $payloadStr | Resp: " + body.take(400).replace("\n", " ")
                 if (resp.isSuccessful && body.isNotEmpty()) {
                     parseVideoportalJson(body, targetUrl, reqObj, itemsOut)
                 }
@@ -169,10 +180,9 @@ object NetworkLoader {
     ) {
         runCatching {
             val rootObj = if (body.startsWith("{")) JSONObject(body) else null
-            val rootUrl = rootObj?.optString("url")?.takeIf { it.isNotBlank() } ?: defaultApiUrl
+            val rootUrl = rootObj?.optString("url")?.takeIf { it.startsWith("http") } ?: defaultApiUrl
             val rootReq = rootObj?.optJSONObject("request") ?: parentRequest
 
-            // Проверяем, не вернул ли сервер сразу прямую ссылку на видеопоток в корне ответа
             if (rootObj != null) {
                 val rootStream = rootObj.optString("stream_url")
                     .ifEmpty { rootObj.optString("video_url") }
@@ -228,7 +238,7 @@ object NetworkLoader {
                 val year = item.optString("year", "")
                 val rating = item.optString("rating", item.optString("rating_kp", item.optString("imdb", "")))
 
-                val itemUrl = item.optString("url").takeIf { it.isNotBlank() } ?: rootUrl
+                val itemUrl = item.optString("url").takeIf { it.startsWith("http") } ?: rootUrl
                 val directMedia = item.optString("stream_url")
                     .ifEmpty { item.optString("video_url") }
                     .ifEmpty { item.optString("file") }
@@ -237,7 +247,6 @@ object NetworkLoader {
 
                 val childReqObj = item.optJSONObject("request")
 
-                // Определяем: это папка/узел портала (нужен следующий POST-запрос) или готовый видеопоток
                 val isMediaUrl = directMedia.startsWith("http") ||
                     itemUrl.endsWith(".m3u8", true) ||
                     itemUrl.endsWith(".mp4", true) ||
@@ -261,7 +270,6 @@ object NetworkLoader {
                         )
                     )
                 } else {
-                    // Собираем JSON-запрос для перехода внутрь этой категории/фильма/сериала
                     val mergedReq = JSONObject(rootReq.toString())
                     if (childReqObj != null) {
                         val keys = childReqObj.keys()
@@ -270,10 +278,10 @@ object NetworkLoader {
                             mergedReq.put(k, childReqObj.get(k))
                         }
                     } else {
-                        val idVal = item.optString("id").ifEmpty { item.optString("category_id") }
-                        if (idVal.isNotEmpty()) {
-                            mergedReq.put("id", idVal)
-                            mergedReq.put("category", idVal)
+                        for (field in listOf("id", "category_id", "cat_id", "category", "cat", "action", "page")) {
+                            if (item.has(field)) {
+                                mergedReq.put(field, item.get(field))
+                            }
                         }
                     }
 
