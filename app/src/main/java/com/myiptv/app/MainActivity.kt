@@ -100,6 +100,7 @@ class MainActivity : ComponentActivity() {
             var vodItems by remember { mutableStateOf<List<VodMovie>>(emptyList()) }
             var vodFolderStack by remember { mutableStateOf<List<Pair<String, List<VodMovie>>>>(emptyList()) }
             var currentVodFolderTitle by remember { mutableStateOf("Кинозал VPortal") }
+            var isLoadingMoreVod by remember { mutableStateOf(false) }
 
             var epgMap by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
             var detectedPlaylistEpgUrl by remember { mutableStateOf<String?>(null) }
@@ -112,7 +113,6 @@ class MainActivity : ComponentActivity() {
                 mutableStateOf(prefs.getStringSet("favs", emptySet())?.toSet() ?: emptySet())
             }
 
-            // 3 главные вкладки сверху: 0 = Телеканалы, 1 = Кинозал, 2 = Настройки
             var currentTab by remember { mutableStateOf(0) }
             var isLoading by remember { mutableStateOf(false) }
             var vportalDiagnostic by remember { mutableStateOf("") }
@@ -224,7 +224,29 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // Автоматическая подгрузка следующих 50 фильмов при прокрутке ленты до конца!
+            fun loadMoreVodAutomatically(nextPageMarker: VodMovie) {
+                if (isLoadingMoreVod || vportalUrl.isBlank()) return
+                scope.launch {
+                    isLoadingMoreVod = true
+                    val res = NetworkLoader.loadVPortalNode(
+                        rawPortalUrl = vportalUrl.trim(),
+                        customTargetUrl = nextPageMarker.targetApiUrl,
+                        customRequestJson = nextPageMarker.requestPayloadJson
+                    )
+                    vportalDiagnostic = res.second
+                    val nextBatch = res.first
+                    // Убираем старый маркер конца страницы и доклеиваем новые 50 фильмов прямо в конец списка!
+                    vodItems = vodItems.filterNot { it.id.startsWith("vp_next_") } + nextBatch
+                    isLoadingMoreVod = false
+                }
+            }
+
             fun openVodNode(item: VodMovie) {
+                if (item.id.startsWith("vp_next_")) {
+                    loadMoreVodAutomatically(item)
+                    return
+                }
                 if (!item.isFolder && item.streamUrl.isNotBlank()) {
                     currentVodStream = item.title to item.streamUrl
                     isFullscreen = true
@@ -374,7 +396,6 @@ class MainActivity : ComponentActivity() {
                         }
                     } else {
                         Column(modifier = Modifier.fillMaxSize()) {
-                            // Верхняя панель: только 3 вкладки (Телеканалы, Кинозал, Настройки)
                             NavigationBar(containerColor = themePalette.card, modifier = Modifier.height(64.dp)) {
                                 NavigationBarItem(
                                     selected = currentTab == 0,
@@ -386,7 +407,7 @@ class MainActivity : ComponentActivity() {
                                     selected = currentTab == 1,
                                     onClick = { currentTab = 1 },
                                     icon = { Icon(Icons.Default.Movie, contentDescription = null) },
-                                    label = { Text("${S.vod} (${vodItems.size})") }
+                                    label = { Text("${S.vod} (${vodItems.count { !it.id.startsWith("vp_next_") }})") }
                                 )
                                 NavigationBarItem(
                                     selected = currentTab == 2,
@@ -396,7 +417,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            if (isLoading) {
+                            if (isLoading || isLoadingMoreVod) {
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = themePalette.primary)
                             }
 
@@ -438,9 +459,11 @@ class MainActivity : ComponentActivity() {
                                     movies = vodItems,
                                     folderTitle = currentVodFolderTitle,
                                     canGoBack = vodFolderStack.isNotEmpty(),
+                                    isLoadingMore = isLoadingMoreVod,
                                     diagnosticLog = vportalDiagnostic,
                                     onBackFolder = { goBackInVod() },
                                     onClickItem = { item -> openVodNode(item) },
+                                    onAutoLoadMore = { marker -> loadMoreVodAutomatically(marker) },
                                     onServerSearch = { q -> searchInVPortal(q) },
                                     onOpenSettings = { currentTab = 2 }
                                 )
@@ -703,7 +726,6 @@ fun LiveTvScreen(
             channels.count { favoriteIds.contains(it.id) }
         }
 
-        // Категория "⭐ Избранное" находится прямо внутри полоски категорий плейлиста!
         val groups = remember(channels, favChannelsCount, S) {
             val baseList = mutableListOf(S.allGroups)
             if (favChannelsCount > 0) {
@@ -876,9 +898,11 @@ fun VodScreen(
     movies: List<VodMovie>,
     folderTitle: String,
     canGoBack: Boolean,
+    isLoadingMore: Boolean,
     diagnosticLog: String,
     onBackFolder: () -> Unit,
     onClickItem: (VodMovie) -> Unit,
+    onAutoLoadMore: (VodMovie) -> Unit,
     onServerSearch: (String) -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -984,6 +1008,15 @@ fun VodScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             items(filtered, key = { it.id }) { movie ->
+                // Если мы докрутили до маркера следующей страницы — программа САМА подгружает еще 50 фильмов!
+                if (movie.id.startsWith("vp_next_")) {
+                    LaunchedEffect(movie.id) {
+                        if (searchQuery.isBlank() && !isLoadingMore) {
+                            onAutoLoadMore(movie)
+                        }
+                    }
+                }
+
                 Card(
                     colors = CardDefaults.cardColors(containerColor = theme.card),
                     shape = RoundedCornerShape(14.dp),
@@ -1007,7 +1040,9 @@ fun VodScreen(
                                 )
                             } else {
                                 Icon(
-                                    imageVector = if (movie.isFolder) Icons.Default.Folder else Icons.Default.PlayCircleFilled,
+                                    imageVector = if (movie.id.startsWith("vp_next_")) Icons.Default.Sync
+                                    else if (movie.isFolder) Icons.Default.Folder
+                                    else Icons.Default.PlayCircleFilled,
                                     contentDescription = null,
                                     tint = theme.primary,
                                     modifier = Modifier.size(46.dp)
@@ -1016,7 +1051,9 @@ fun VodScreen(
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            movie.title,
+                            text = if (movie.id.startsWith("vp_next_")) {
+                                if (S.isRu) "⏳ Загружаем ещё 50..." else "⏳ Loading 50 more..."
+                            } else movie.title,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = theme.text,
@@ -1182,14 +1219,12 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // СТРОЧКА 2: ТЕЛЕПРОГРАММА EPG + ПОЛОСКА ЗАГРУЗКИ И СТАТУС
         ExpandableSectionRow(
             title = S.catEpg,
             isExpanded = expandedRow == 2,
             theme = theme,
             onToggle = { toggleRow(2) }
         ) {
-            // Блок отслеживания загрузки и состояния EPG
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1211,11 +1246,7 @@ fun AccordionSettingsScreen(
                         color = theme.primary
                     )
                 }
-                Text(
-                    text = epgStatusText,
-                    fontSize = 13.sp,
-                    color = theme.text
-                )
+                Text(text = epgStatusText, fontSize = 13.sp, color = theme.text)
                 Button(
                     onClick = onRefreshEpgNow,
                     enabled = !isEpgLoading,
@@ -1223,10 +1254,7 @@ fun AccordionSettingsScreen(
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text(
-                        if (S.isRu) "🔄 Обновить телепрограмму сейчас" else "🔄 Refresh EPG Now",
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text(if (S.isRu) "🔄 Обновить телепрограмму сейчас" else "🔄 Refresh EPG Now", fontWeight = FontWeight.Bold)
                 }
             }
 
