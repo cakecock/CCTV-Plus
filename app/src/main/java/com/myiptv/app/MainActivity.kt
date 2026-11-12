@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -38,7 +39,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -65,6 +65,25 @@ fun findChannelSchedule(ch: Channel, epgMap: Map<String, List<EpgProgramItem>>):
     return emptyList()
 }
 
+@Composable
+fun PlayerClockBadge(clockPosition: Int, currentTimeMs: Long, accentColor: Color, modifier: Modifier = Modifier) {
+    if (clockPosition !in 1..2) return
+    val clockText = remember(currentTimeMs) { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(currentTimeMs)) }
+    Box(modifier = modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .align(if (clockPosition == 1) Alignment.TopStart else Alignment.TopEnd)
+                .padding(horizontal = 10.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xAA000000))
+                .border(1.dp, accentColor.copy(alpha = 0.65f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp, vertical = 3.dp)
+        ) {
+            Text(clockText, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
     private var webServer: SimpleQrWebServer? = null
 
@@ -85,6 +104,8 @@ class MainActivity : ComponentActivity() {
             var deviceType by remember { mutableStateOf(prefs.getString("device_type", "mobile") ?: "mobile") }
             var controlMode by remember { mutableStateOf(prefs.getString("control_mode", "touch") ?: "touch") }
             var clockPosition by remember { mutableStateOf(prefs.getInt("clock_pos", 0)) }
+            var playerEngine by remember { mutableStateOf(prefs.getInt("player_engine", 0)) } // 0=Exo, 1=Native, 2=External
+            var archiveDays by remember { mutableStateOf(prefs.getInt("archive_days", 3)) } // 1, 3, 5 days
             var parentalEnabled by remember { mutableStateOf(prefs.getBoolean("parental_enabled", false)) }
             var parentalPin by remember { mutableStateOf(prefs.getString("parental_pin", "0000") ?: "0000") }
             var adultUnlockedSession by remember { mutableStateOf(false) }
@@ -158,6 +179,8 @@ class MainActivity : ComponentActivity() {
                     .putString("device_type", deviceType)
                     .putString("control_mode", controlMode)
                     .putInt("clock_pos", clockPosition)
+                    .putInt("player_engine", playerEngine)
+                    .putInt("archive_days", archiveDays)
                     .putBoolean("parental_enabled", parentalEnabled)
                     .putString("parental_pin", parentalPin.ifEmpty { "0000" })
                     .putString("selected_playlist_id", selectedPlaylistId)
@@ -173,7 +196,6 @@ class MainActivity : ComponentActivity() {
                     .apply()
             }
 
-            // Каскадная загрузка EPG с поддержкой встроенных пресетов TVLider и IPTVx
             fun loadEpgWithStatus(embeddedOverride: String? = detectedPlaylistEpgUrl) {
                 val customSelected = epgSources.find { it.id == selectedEpgId }?.url
                 val candidateUrls = when (selectedEpgId) {
@@ -195,8 +217,8 @@ class MainActivity : ComponentActivity() {
 
                     for (testUrl in candidateUrls) {
                         usedUrl = testUrl
-                        epgStatusText = if (isRu) "⏳ Загрузка EPG: $testUrl ..." else "⏳ Loading EPG: $testUrl ..."
-                        val loaded = NetworkLoader.loadFullEpgSchedule(testUrl.trim())
+                        epgStatusText = if (isRu) "⏳ Загрузка EPG (${archiveDays}д): $testUrl ..." else "⏳ Loading EPG: $testUrl ..."
+                        val loaded = NetworkLoader.loadFullEpgSchedule(testUrl.trim(), archiveDays)
                         if (loaded.isNotEmpty()) {
                             finalSchedule = loaded
                             break
@@ -209,11 +231,11 @@ class MainActivity : ComponentActivity() {
                     val matchedCount = channels.count { findChannelSchedule(it, finalSchedule).isNotEmpty() }
 
                     epgStatusText = if (finalSchedule.isNotEmpty()) {
-                        if (isRu) "✅ Обновлено в $timeStr ($usedUrl)\nНайдена программа для $matchedCount из ${channels.size} каналов"
-                        else "✅ Updated at $timeStr: matched $matchedCount / ${channels.size} channels"
+                        if (isRu) "✅ Обновлено в $timeStr ($usedUrl)\nНайдено для $matchedCount из ${channels.size} каналов (архив ${archiveDays} дн.)"
+                        else "✅ Updated at $timeStr: matched $matchedCount / ${channels.size} (${archiveDays}d)"
                     } else {
-                        if (isRu) "⚠️ Не удалось загрузить передач ($timeStr). Попробуйте выбрать другой встроенный источник EPG в списке ниже."
-                        else "⚠️ Failed to load EPG ($timeStr). Try another EPG preset below."
+                        if (isRu) "⚠️ Не удалось загрузить передачи ($timeStr). Выберите другой источник EPG ниже."
+                        else "⚠️ Failed to load EPG ($timeStr). Try another preset."
                     }
                 }
             }
@@ -257,6 +279,8 @@ class MainActivity : ComponentActivity() {
                 deviceType = prefs.getString("device_type", "mobile") ?: "mobile"
                 controlMode = prefs.getString("control_mode", "touch") ?: "touch"
                 clockPosition = prefs.getInt("clock_pos", 0)
+                playerEngine = prefs.getInt("player_engine", 0)
+                archiveDays = prefs.getInt("archive_days", 3)
                 parentalEnabled = prefs.getBoolean("parental_enabled", false)
                 parentalPin = prefs.getString("parental_pin", "0000") ?: "0000"
                 themePalette = AppThemePalette.fromId(prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
@@ -276,19 +300,25 @@ class MainActivity : ComponentActivity() {
                 reloadAllData()
             }
 
-            fun selectChannelWithPinCheck(ch: Channel) {
-                if (parentalEnabled && !adultUnlockedSession && (isAdultCategoryOrChannel(ch.group) || isAdultCategoryOrChannel(ch.name))) {
-                    pendingPinAction = {
-                        if (currentChannel != null && currentChannel?.id != ch.id) previousChannel = currentChannel
-                        currentVodStream = null; activeArchiveProgram = null; archiveSeekOffsetSec = 0L
-                        currentChannel = ch
-                        if (openFullscreenOnTap) isFullscreen = true
-                    }
+            fun openStreamWithSelectedEngine(url: String, title: String) {
+                if (playerEngine == 2) {
+                    launchExternalVideoPlayer(this@MainActivity, url, title)
                 } else {
+                    isFullscreen = true
+                }
+            }
+
+            fun selectChannelWithPinCheck(ch: Channel) {
+                val applySelection = {
                     if (currentChannel != null && currentChannel?.id != ch.id) previousChannel = currentChannel
                     currentVodStream = null; activeArchiveProgram = null; archiveSeekOffsetSec = 0L
                     currentChannel = ch
-                    if (openFullscreenOnTap) isFullscreen = true
+                    if (openFullscreenOnTap) openStreamWithSelectedEngine(ch.streamUrl, ch.name)
+                }
+                if (parentalEnabled && !adultUnlockedSession && (isAdultCategoryOrChannel(ch.group) || isAdultCategoryOrChannel(ch.name))) {
+                    pendingPinAction = applySelection
+                } else {
+                    applySelection()
                 }
             }
 
@@ -307,7 +337,9 @@ class MainActivity : ComponentActivity() {
                 vodNoticeMessage = ""
                 if (item.id.startsWith("vp_next_")) { loadMoreVodAutomatically(item); return }
                 if (!item.isFolder && item.streamUrl.isNotBlank()) {
-                    currentVodStream = item.title to item.streamUrl; isFullscreen = true; return
+                    if (playerEngine == 2) launchExternalVideoPlayer(this@MainActivity, item.streamUrl, item.title)
+                    else { currentVodStream = item.title to item.streamUrl; isFullscreen = true }
+                    return
                 }
                 if (vportalUrl.isBlank()) return
                 scope.launch {
@@ -317,7 +349,9 @@ class MainActivity : ComponentActivity() {
                     val children = res.first
                     isLoading = false
                     if (children.size == 1 && !children.first().isFolder && children.first().streamUrl.isNotBlank()) {
-                        currentVodStream = item.title to children.first().streamUrl; isFullscreen = true
+                        val sUrl = children.first().streamUrl
+                        if (playerEngine == 2) launchExternalVideoPlayer(this@MainActivity, sUrl, item.title)
+                        else { currentVodStream = item.title to sUrl; isFullscreen = true }
                     } else if (children.isNotEmpty()) {
                         vodFolderStack = vodFolderStack + (currentVodFolderTitle to vodItems)
                         currentVodFolderTitle = item.title; vodItems = children
@@ -393,13 +427,10 @@ class MainActivity : ComponentActivity() {
                     Box(modifier = Modifier.fillMaxSize()) {
                         if (pendingPinAction != null) {
                             ParentalPinDialog(
-                                S = S,
-                                theme = themePalette,
-                                expectedPin = parentalPin.ifEmpty { "0000" },
+                                S = S, theme = themePalette, expectedPin = parentalPin.ifEmpty { "0000" },
                                 onSuccess = {
                                     adultUnlockedSession = true
-                                    val act = pendingPinAction; pendingPinAction = null
-                                    act?.invoke()
+                                    val act = pendingPinAction; pendingPinAction = null; act?.invoke()
                                 },
                                 onDismiss = { pendingPinAction = null }
                             )
@@ -414,10 +445,14 @@ class MainActivity : ComponentActivity() {
                                 onPlayArchive = { prog ->
                                     currentChannel = ch; currentVodStream = null
                                     activeArchiveProgram = prog; archiveSeekOffsetSec = 0L; epgDialogChannel = null
+                                    if (playerEngine == 2) {
+                                        launchExternalVideoPlayer(this@MainActivity, buildArchiveStreamUrl(ch, prog.startMs, prog.stopMs), "${ch.name}: ${prog.title}")
+                                    }
                                 },
                                 onPlayLive = {
                                     currentChannel = ch; currentVodStream = null
                                     activeArchiveProgram = null; archiveSeekOffsetSec = 0L; epgDialogChannel = null
+                                    if (playerEngine == 2) launchExternalVideoPlayer(this@MainActivity, ch.streamUrl, ch.name)
                                 }
                             )
                         }
@@ -462,33 +497,44 @@ class MainActivity : ComponentActivity() {
                                     userAgent = currentChannel?.userAgent ?: playerDefaultUa,
                                     resizeMode = playerResizeMode,
                                     bufferMode = playerBufferMode,
-                                    useNativeController = isVod,
+                                    useNativeController = isVod || playerEngine == 1,
                                     reconnectingText = S.reconnecting,
+                                    playerEngine = playerEngine,
                                     enableSwipeGestures = controlMode == "touch",
                                     showAudioSelectorDialog = showAudioTracksDialog,
                                     onDismissAudioSelector = { showAudioTracksDialog = false },
                                     modifier = Modifier.fillMaxSize()
                                 )
 
+                                // Часы внутри полноэкранного плеера
+                                PlayerClockBadge(clockPosition, currentTimeMs, themePalette.primary)
+
+                                // Верхняя панель кнопок (сдвигается чуть вниз, если часы включены, чтобы не перекрываться)
                                 Row(
-                                    modifier = Modifier.align(Alignment.TopStart).padding(10.dp).background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
+                                    modifier = Modifier.align(Alignment.TopStart)
+                                        .padding(top = if (clockPosition != 0) 40.dp else 10.dp, start = 10.dp, end = 10.dp)
+                                        .background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
-                                    Text(playTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp))
+                                    Text(playTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 140.dp))
 
-                                    OutlinedButton(onClick = { playerResizeMode = (playerResizeMode + 1) % 3; prefs.edit().putInt("player_resize", playerResizeMode).apply() }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                                        Text("📐 ${resizeLabels[playerResizeMode]}", color = Color.White, fontSize = 11.sp)
-                                    }
-                                    OutlinedButton(onClick = { showAudioTracksDialog = true }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                                        Text("🔊 Звук", color = Color.White, fontSize = 11.sp)
+                                    if (playerEngine == 0) {
+                                        OutlinedButton(onClick = { playerResizeMode = (playerResizeMode + 1) % 3; prefs.edit().putInt("player_resize", playerResizeMode).apply() }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                                            Text("📐 ${resizeLabels[playerResizeMode]}", color = Color.White, fontSize = 11.sp)
+                                        }
+                                        OutlinedButton(onClick = { showAudioTracksDialog = true }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                                            Text("🔊 Звук", color = Color.White, fontSize = 11.sp)
+                                        }
                                     }
                                     if (!isVod && currentChannel != null) {
                                         OutlinedButton(onClick = { showTiviMateOverlay = !showTiviMateOverlay }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
                                             Text("🗂 ТВ-Гид", color = Color(0xFF10B981), fontSize = 11.sp)
                                         }
-                                        OutlinedButton(onClick = { isMultiViewMode = true }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                                            Text("⊞ 4 Экран", color = Color(0xFFF59E0B), fontSize = 11.sp)
+                                        if (playerEngine == 0) {
+                                            OutlinedButton(onClick = { isMultiViewMode = true }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
+                                                Text("⊞ 4 Экран", color = Color(0xFFF59E0B), fontSize = 11.sp)
+                                            }
                                         }
                                     }
                                     if (isSmartphone) {
@@ -506,7 +552,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
 
-                                if (!isVod && currentChannel != null && !showTiviMateOverlay) {
+                                if (!isVod && currentChannel != null && !showTiviMateOverlay && playerEngine == 0) {
                                     Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(14.dp).background(Color(0xCC121417), RoundedCornerShape(14.dp)).padding(horizontal = 16.dp, vertical = 10.dp)) {
                                         if (isArchive && activeArchiveProgram != null) {
                                             val prog = activeArchiveProgram!!
@@ -571,7 +617,8 @@ class MainActivity : ComponentActivity() {
                                         channels = channels, epgScheduleMap = epgScheduleMap, favoriteIds = favoriteIds,
                                         currentChannel = currentChannel, previousChannel = previousChannel,
                                         activeArchiveProgram = activeArchiveProgram, activeArchiveUrl = activeArchiveUrl,
-                                        currentTimeMs = currentTimeMs, playerResizeMode = playerResizeMode,
+                                        currentTimeMs = currentTimeMs, clockPosition = clockPosition,
+                                        playerEngine = playerEngine, playerResizeMode = playerResizeMode,
                                         playerBufferMode = playerBufferMode, playerDefaultUa = playerDefaultUa,
                                         onSelectChannel = { selectChannelWithPinCheck(it) },
                                         onOpenEpgDialog = { epgDialogChannel = it },
@@ -581,7 +628,11 @@ class MainActivity : ComponentActivity() {
                                             if (!next.add(ch.id)) next.remove(ch.id)
                                             favoriteIds = next; prefs.edit().putStringSet("favs", next).apply()
                                         },
-                                        onFullscreen = { isFullscreen = true },
+                                        onFullscreen = {
+                                            val ch = currentChannel ?: return@LiveTvScreen
+                                            val urlToOpen = activeArchiveUrl ?: ch.streamUrl
+                                            openStreamWithSelectedEngine(urlToOpen, ch.name)
+                                        },
                                         onOpenSettings = { currentTab = 2 }
                                     )
                                     1 -> VodScreen(
@@ -594,10 +645,13 @@ class MainActivity : ComponentActivity() {
                                     )
                                     2 -> AccordionSettingsScreen(
                                         S = S, prefs = prefs, theme = themePalette, deviceType = deviceType, controlMode = controlMode,
-                                        clockPosition = clockPosition, parentalEnabled = parentalEnabled, parentalPin = parentalPin,
+                                        clockPosition = clockPosition, playerEngine = playerEngine, archiveDays = archiveDays,
+                                        parentalEnabled = parentalEnabled, parentalPin = parentalPin,
                                         onDeviceTypeChange = { deviceType = it; persistLists() },
                                         onControlModeChange = { controlMode = it; persistLists() },
                                         onClockPositionChange = { clockPosition = it; persistLists() },
+                                        onPlayerEngineChange = { playerEngine = it; persistLists() },
+                                        onArchiveDaysChange = { archiveDays = it; persistLists(); loadEpgWithStatus() },
                                         onParentalEnabledChange = { parentalEnabled = it; adultUnlockedSession = false; persistLists() },
                                         onParentalPinChange = { parentalPin = it; persistLists() },
                                         onSelectTheme = { themePalette = it; prefs.edit().putString("theme_id", it.id).apply() },
@@ -639,16 +693,6 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                             }
-                        }
-
-                        if (clockPosition in 1..2) {
-                            val clockText = remember(currentTimeMs) { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(currentTimeMs)) }
-                            Box(
-                                modifier = Modifier.align(if (clockPosition == 1) Alignment.TopStart else Alignment.TopEnd)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp).clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xAA000000)).border(1.dp, themePalette.primary.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) { Text(clockText, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
                         }
                     }
                 }
@@ -707,6 +751,14 @@ fun EpgAndArchiveDialog(
 ) {
     val now = System.currentTimeMillis()
     val channelHasArchive = channel.catchupDays > 0
+    val listState = rememberLazyListState()
+
+    // Автоматически прокручиваем список к текущей передаче в прямом эфире (вверх - архив, вниз - будущее)
+    LaunchedEffect(schedule) {
+        val liveIdx = schedule.indexOfFirst { now in it.startMs..it.stopMs }
+        if (liveIdx > 0) listState.scrollToItem((liveIdx - 1).coerceAtLeast(0))
+    }
+
     Dialog(onDismissRequest = onDismiss) {
         Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)) {
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -714,8 +766,8 @@ fun EpgAndArchiveDialog(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("📅 ${channel.name}", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = theme.primary, maxLines = 1)
                         Text(
-                            if (channelHasArchive) (if (S.isRu) "Архив доступен: нажмите на прошедшую передачу для просмотра" else "Tap any past program to watch Archive")
-                            else (if (S.isRu) "Расписание телепередач (прямой эфир)" else "Channel Schedule (Live only)"),
+                            if (channelHasArchive) (if (S.isRu) "Архив доступен (листайте вверх): нажмите для просмотра" else "Tap past program for Archive")
+                            else (if (S.isRu) "Расписание телепередач (прямой эфир)" else "Channel Schedule"),
                             fontSize = 12.sp, color = theme.subtext
                         )
                     }
@@ -727,7 +779,7 @@ fun EpgAndArchiveDialog(
                         Text(if (S.isRu) "Для канала «${channel.name}» программа передач не найдена.\nВыберите в Настройках -> Телепрограмма встроенный источник TVLider или IPTVx." else "No TV guide found.", fontSize = 14.sp, color = theme.subtext)
                     }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
                         items(schedule) { prog ->
                             val isPast = prog.stopMs < now; val isNow = now in prog.startMs..prog.stopMs
                             val canPlayThisPast = isPast && channelHasArchive
@@ -780,6 +832,8 @@ fun LiveTvScreen(
     activeArchiveProgram: EpgProgramItem?,
     activeArchiveUrl: String?,
     currentTimeMs: Long,
+    clockPosition: Int,
+    playerEngine: Int,
     playerResizeMode: Int,
     playerBufferMode: Int,
     playerDefaultUa: String,
@@ -846,8 +900,11 @@ fun LiveTvScreen(
                         bufferMode = playerBufferMode,
                         useNativeController = false,
                         reconnectingText = S.reconnecting,
+                        playerEngine = if (playerEngine == 2) 0 else playerEngine,
                         modifier = Modifier.fillMaxSize().clickable { onFullscreen() }
                     )
+                    // Часы показываются только внутри окошка плеера
+                    PlayerClockBadge(clockPosition, currentTimeMs, theme.primary)
                 }
                 Column(modifier = Modifier.weight(1f).fillMaxHeight().background(theme.card).padding(10.dp), verticalArrangement = Arrangement.SpaceBetween) {
                     Column {
@@ -855,7 +912,6 @@ fun LiveTvScreen(
                         Text(currentChannel.group, fontSize = 11.sp, color = theme.subtext, maxLines = 1)
                     }
 
-                    // ПЛАШКА ТЕКУЩЕЙ ПЕРЕДАЧИ И АРХИВА
                     Column(
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg)
                             .border(1.dp, theme.primary.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
@@ -883,7 +939,7 @@ fun LiveTvScreen(
                         Button(onClick = onFullscreen, modifier = Modifier.weight(1f).height(36.dp), contentPadding = PaddingValues(4.dp)) {
                             Icon(Icons.Default.Fullscreen, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text(S.fullscreen, fontSize = 11.sp, maxLines = 1)
+                            Text(if (playerEngine == 2) (if (S.isRu) "Внеш. плеер" else "External") else S.fullscreen, fontSize = 11.sp, maxLines = 1)
                         }
                         if (activeArchiveProgram != null) {
                             OutlinedButton(onClick = onResetToLive, modifier = Modifier.height(36.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
