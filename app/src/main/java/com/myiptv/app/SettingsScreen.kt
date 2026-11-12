@@ -36,10 +36,10 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
 val BuiltInEpgPresets = listOf(
-    "AUTO_PLAYLIST" to "🔄 Авто (Из плейлиста + TVLider + IPTVx)",
-    "BUILTIN_TVLIDER" to "📡 Встроенный 1: TVLider / Edem (epg.it999.ru)",
-    "BUILTIN_IPTVX_LITE" to "⚡ Встроенный 2: IPTVx.one Lite (Быстрый СНГ/РФ)",
-    "BUILTIN_IPTVX_FULL" to "🌍 Встроенный 3: IPTVx.one Full (Полная база)"
+    "AUTO_PLAYLIST" to "🔄 Авто (Плейлист + TVLider + IPTVx)",
+    "BUILTIN_TVLIDER" to "📡 TVLider / Edem (epg.it999.ru)",
+    "BUILTIN_IPTVX_LITE" to "⚡ IPTVx Lite (СНГ / РФ)",
+    "BUILTIN_IPTVX_FULL" to "🌍 IPTVx Full (Полная база)"
 )
 
 fun getAppVersionInfo(context: Context): Pair<String, Long> = runCatching {
@@ -60,20 +60,20 @@ fun SourceDropdownSelector(
     Box(modifier = modifier) {
         Row(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(theme.bg)
-                .border(1.dp, theme.primary.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                .clickable { expanded = true }.padding(horizontal = 14.dp, vertical = 12.dp),
+                .border(1.dp, theme.primary.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                .clickable { expanded = true }.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(label, fontSize = 11.sp, color = theme.subtext)
-                Text(selectedTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = theme.text, maxLines = 1)
+                Text(selectedTitle, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = theme.text, maxLines = 1)
             }
             Icon(Icons.Default.ArrowDropDown, null, tint = theme.primary)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.background(theme.card)) {
             options.forEach { (id, title) ->
-                DropdownMenuItem(text = { Text(title, color = theme.text) }, onClick = { expanded = false; onSelect(id) })
+                DropdownMenuItem(text = { Text(title, color = theme.text, fontSize = 14.sp) }, onClick = { expanded = false; onSelect(id) })
             }
         }
     }
@@ -94,7 +94,7 @@ fun ExpandableSectionRow(
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
-                modifier = Modifier.fillMaxWidth().clickable { onToggle() }.padding(16.dp),
+                modifier = Modifier.fillMaxWidth().clickable { onToggle() }.padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -103,7 +103,7 @@ fun ExpandableSectionRow(
             }
             if (isExpanded) {
                 HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f))
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+                Column(modifier = Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
             }
         }
     }
@@ -125,29 +125,29 @@ fun FirstLaunchSetupScreen(
         Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(24.dp), modifier = Modifier.padding(20.dp).widthIn(max = 480.dp)) {
             Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("📺 CCTV Plus", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = theme.primary)
-                Text(if (selRu) "Настройка перед первым запуском" else "First Launch Setup", fontSize = 15.sp, color = theme.subtext)
+                Text(if (selRu) "Быстрая настройка" else "Quick Setup", fontSize = 15.sp, color = theme.subtext)
 
-                Text(if (selRu) "1. Выберите язык / Language:" else "1. Choose Language:", fontWeight = FontWeight.Bold, color = theme.text)
+                Text(if (selRu) "Язык / Language" else "Language", fontWeight = FontWeight.Bold, color = theme.text)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     FilterChip(selected = selRu, onClick = { selRu = true }, label = { Text("🇷🇺 Русский") }, modifier = Modifier.weight(1f))
                     FilterChip(selected = !selRu, onClick = { selRu = false }, label = { Text("🇬🇧 English") }, modifier = Modifier.weight(1f))
                 }
 
-                Text(if (selRu) "2. Ваше устройство:" else "2. Your Device:", fontWeight = FontWeight.Bold, color = theme.text)
+                Text(if (selRu) "Устройство" else "Device", fontWeight = FontWeight.Bold, color = theme.text)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                    FilterChip(selected = selDevice == "mobile", onClick = { selDevice = "mobile"; selControl = "touch" }, label = { Text(if (selRu) "📱 Смартфон" else "📱 Smartphone") }, modifier = Modifier.weight(1f))
-                    FilterChip(selected = selDevice == "tv", onClick = { selDevice = "tv"; selControl = "remote" }, label = { Text(if (selRu) "📺 Телевизор (ТВ)" else "📺 Android TV") }, modifier = Modifier.weight(1f))
+                    FilterChip(selected = selDevice == "mobile", onClick = { selDevice = "mobile"; selControl = "touch" }, label = { Text(if (selRu) "📱 Смартфон" else "📱 Phone") }, modifier = Modifier.weight(1f))
+                    FilterChip(selected = selDevice == "tv", onClick = { selDevice = "tv"; selControl = "remote" }, label = { Text(if (selRu) "📺 Телевизор" else "📺 Android TV") }, modifier = Modifier.weight(1f))
                 }
 
-                Text(if (selRu) "3. Способ управления:" else "3. Control Mode:", fontWeight = FontWeight.Bold, color = theme.text)
+                Text(if (selRu) "Управление" else "Controls", fontWeight = FontWeight.Bold, color = theme.text)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                     FilterChip(selected = selControl == "touch", onClick = { selControl = "touch" }, label = { Text(if (selRu) "👆 Сенсор" else "👆 Touch") }, modifier = Modifier.weight(1f))
-                    FilterChip(selected = selControl == "remote", onClick = { selControl = "remote" }, label = { Text(if (selRu) "🎮 Пульт ДУ" else "🎮 TV Remote") }, modifier = Modifier.weight(1f))
+                    FilterChip(selected = selControl == "remote", onClick = { selControl = "remote" }, label = { Text(if (selRu) "🎮 Пульт" else "🎮 Remote") }, modifier = Modifier.weight(1f))
                 }
 
                 Spacer(Modifier.height(6.dp))
-                Button(onClick = { onFinishSetup(selRu, selDevice, selControl) }, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(14.dp)) {
-                    Text(if (selRu) "🚀 Продолжить" else "🚀 Continue", fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Button(onClick = { onFinishSetup(selRu, selDevice, selControl) }, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(14.dp)) {
+                    Text(if (selRu) "🚀 Готово" else "🚀 Start", fontSize = 17.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -213,7 +213,7 @@ fun AccordionSettingsScreen(
     val scope = rememberCoroutineScope()
     val (installedVerName, installedVerCode) = remember { getAppVersionInfo(context) }
 
-    var expandedRow by remember { mutableStateOf(0) }
+    var expandedRow by remember { mutableStateOf(-1) }
     fun toggleRow(idx: Int) { expandedRow = if (expandedRow == idx) -1 else idx }
     var selectedSourceSubMenu by remember { mutableStateOf("playlists") }
 
@@ -234,7 +234,7 @@ fun AccordionSettingsScreen(
         if (uri != null) {
             runCatching {
                 context.contentResolver.openOutputStream(uri)?.use { it.write(exportAllSettingsToJson(prefs).toByteArray(Charsets.UTF_8)) }
-                backupStatus = if (S.isRu) "✅ Сохранено в файл!" else "✅ Exported!"
+                backupStatus = if (S.isRu) "✅ Сохранено" else "✅ Exported"
             }.onFailure { backupStatus = "❌ ${it.localizedMessage}" }
         }
     }
@@ -244,15 +244,16 @@ fun AccordionSettingsScreen(
             runCatching {
                 val jsonText = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
                 if (importAllSettingsFromJson(prefs, jsonText)) {
-                    backupStatus = if (S.isRu) "✅ Настройки импортированы!" else "✅ Imported!"
+                    backupStatus = if (S.isRu) "✅ Загружено" else "✅ Imported"
                     onSettingsImported()
-                } else backupStatus = "❌ Неверный формат файла"
+                } else backupStatus = "❌ Ошибка формата"
             }.onFailure { backupStatus = "❌ ${it.localizedMessage}" }
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // 1. ИСТОЧНИКИ И КОНТЕНТ
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+        // 1. ИСТОЧНИКИ (Плейлисты, EPG, Порталы, QR)
         ExpandableSectionRow(S.catSourcesGroup, expandedRow == 0, theme, { toggleRow(0) }) {
             val subOpts = listOf(
                 "playlists" to "${S.catPlaylists} (${playlists.size})",
@@ -261,14 +262,8 @@ fun AccordionSettingsScreen(
                 "qr" to S.catQr
             )
             val curSubTitle = subOpts.find { it.first == selectedSourceSubMenu }?.second ?: subOpts.first().second
-            SourceDropdownSelector(
-                label = if (S.isRu) "Выберите раздел источников:" else "Select Source Section:",
-                selectedTitle = curSubTitle,
-                options = subOpts,
-                theme = theme,
-                onSelect = { selectedSourceSubMenu = it }
-            )
-            HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 4.dp))
+            SourceDropdownSelector(if (S.isRu) "Раздел:" else "Section:", curSubTitle, subOpts, theme) { selectedSourceSubMenu = it }
+            HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f))
 
             when (selectedSourceSubMenu) {
                 "playlists" -> {
@@ -282,39 +277,28 @@ fun AccordionSettingsScreen(
                     playlists.forEach { pl ->
                         Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(pl.name, fontWeight = FontWeight.Bold, color = theme.text)
-                                Text(pl.url, fontSize = 12.sp, color = theme.subtext, maxLines = 1)
+                                Text(pl.name, fontWeight = FontWeight.Bold, color = theme.text, fontSize = 14.sp)
+                                Text(pl.url, fontSize = 11.sp, color = theme.subtext, maxLines = 1)
                             }
                             IconButton(onClick = { onDeletePlaylist(pl.id) }) { Icon(Icons.Default.Delete, null, tint = Color(0xFFEF4444)) }
                         }
                     }
                 }
                 "epg" -> {
-                    Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(theme.bg).border(1.dp, theme.primary.copy(alpha = 0.4f), RoundedCornerShape(12.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(if (S.isRu) "Состояние телепрограммы (EPG):" else "EPG Status:", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = theme.primary)
-                        if (isEpgLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(6.dp), color = theme.primary)
-                        Text(epgStatusText, fontSize = 13.sp, color = theme.text)
+                    Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        if (isEpgLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(5.dp), color = theme.primary)
+                        Text(epgStatusText, fontSize = 12.sp, color = theme.text)
                         Button(onClick = onRefreshEpgNow, enabled = !isEpgLoading, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(8.dp))
-                            Text(if (S.isRu) "🔄 Обновить телепрограмму сейчас" else "🔄 Refresh EPG Now", fontWeight = FontWeight.Bold)
+                            Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp))
+                            Text(if (S.isRu) "Обновить EPG" else "Refresh EPG", fontWeight = FontWeight.Bold)
                         }
                     }
                     val epgOpts = BuiltInEpgPresets + epgSources.map { it.id to "📌 ${it.name}" }
                     val curEpg = epgOpts.find { it.first == selectedEpgId }?.second ?: BuiltInEpgPresets.first().second
                     SourceDropdownSelector(S.activeEpgLabel, curEpg, epgOpts, theme, onSelectEpg)
 
-                    val archiveOpts = listOf(
-                        "1" to (if (S.isRu) "⏪ 1 день назад (Быстрая загрузка)" else "⏪ 1 Day Back"),
-                        "3" to (if (S.isRu) "⏪ 3 дня назад (Оптимально)" else "⏪ 3 Days Back"),
-                        "5" to (if (S.isRu) "⏪ 5 дней назад (Максимум)" else "⏪ 5 Days Back")
-                    )
-                    SourceDropdownSelector(
-                        label = if (S.isRu) "Глубина архива (дней):" else "Archive Depth (Days):",
-                        selectedTitle = archiveOpts.find { it.first == archiveDays.toString() }?.second ?: archiveOpts[1].second,
-                        options = archiveOpts,
-                        theme = theme,
-                        onSelect = { onArchiveDaysChange(it.toIntOrNull() ?: 3) }
-                    )
+                    val archiveOpts = listOf("1" to "1 день", "3" to "3 дня", "5" to "5 дней")
+                    SourceDropdownSelector(if (S.isRu) "Глубина архива:" else "Archive:", archiveOpts.find { it.first == archiveDays.toString() }?.second ?: "3 дня", archiveOpts, theme) { onArchiveDaysChange(it.toIntOrNull() ?: 3) }
 
                     OutlinedTextField(value = newEpgName, onValueChange = { newEpgName = it }, label = { Text(S.addSourceName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = newEpgUrl, onValueChange = { newEpgUrl = it }, label = { Text(S.addSourceUrl) }, trailingIcon = { if (newEpgUrl.isNotEmpty()) IconButton(onClick = { newEpgUrl = "" }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -322,24 +306,21 @@ fun AccordionSettingsScreen(
                     epgSources.forEach { epg ->
                         Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(epg.name, fontWeight = FontWeight.Bold, color = theme.text)
-                                Text(epg.url, fontSize = 12.sp, color = theme.subtext, maxLines = 1)
+                                Text(epg.name, fontWeight = FontWeight.Bold, color = theme.text, fontSize = 14.sp)
+                                Text(epg.url, fontSize = 11.sp, color = theme.subtext, maxLines = 1)
                             }
                             IconButton(onClick = { onDeleteEpg(epg.id) }) { Icon(Icons.Default.Delete, null, tint = Color(0xFFEF4444)) }
                         }
                     }
                 }
                 "portals" -> {
-                    Text("🎬 VPortal (TVlider / iLook)", fontWeight = FontWeight.Bold, color = theme.primary)
-                    OutlinedTextField(value = vportalUrl, onValueChange = onVportalChange, label = { Text("portal::[key:...]http://.../api/v1/") }, trailingIcon = { if (vportalUrl.isNotEmpty()) IconButton(onClick = { onVportalChange("") }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Text("📡 Stalker Portal", fontWeight = FontWeight.Bold, color = theme.primary)
-                    OutlinedTextField(value = stalkerUrl, onValueChange = onStalkerUrlChange, label = { Text("http://.../stalker_portal/c/") }, trailingIcon = { if (stalkerUrl.isNotEmpty()) IconButton(onClick = { onStalkerUrlChange("") }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = stalkerMac, onValueChange = onStalkerMacChange, label = { Text("MAC (00:1A:79:XX:XX:XX)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    Button(onClick = onSaveAndReload, modifier = Modifier.fillMaxWidth().height(50.dp)) { Text(S.saveAndReloadBtn, fontWeight = FontWeight.Bold) }
+                    OutlinedTextField(value = vportalUrl, onValueChange = onVportalChange, label = { Text("VPortal (portal::[key:...]http://...)") }, trailingIcon = { if (vportalUrl.isNotEmpty()) IconButton(onClick = { onVportalChange("") }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = stalkerUrl, onValueChange = onStalkerUrlChange, label = { Text("Stalker URL") }, trailingIcon = { if (stalkerUrl.isNotEmpty()) IconButton(onClick = { onStalkerUrlChange("") }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = stalkerMac, onValueChange = onStalkerMacChange, label = { Text("Stalker MAC") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Button(onClick = onSaveAndReload, modifier = Modifier.fillMaxWidth()) { Text(S.saveAndReloadBtn, fontWeight = FontWeight.Bold) }
                     if (vportalDiagnostic.isNotBlank()) {
-                        Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Диагностика VPortal:", fontWeight = FontWeight.Bold, color = theme.primary)
-                            Text(vportalDiagnostic, fontSize = 12.sp, color = theme.text)
+                        Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(vportalDiagnostic, fontSize = 11.sp, color = theme.subtext)
                             OutlinedButton(onClick = {
                                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 cm.setPrimaryClip(ClipData.newPlainText("VPortalLog", vportalDiagnostic))
@@ -352,226 +333,196 @@ fun AccordionSettingsScreen(
                     val remoteUrl = "http://$localIp:8989"
                     val qrBitmap = remember(remoteUrl) { generateQrBitmap(remoteUrl, 360) }
                     Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                        if (qrBitmap != null) Image(bitmap = qrBitmap.asImageBitmap(), contentDescription = "QR", modifier = Modifier.size(180.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).padding(8.dp))
-                        Spacer(Modifier.height(10.dp))
-                        Text("🌐 $remoteUrl", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = theme.primary)
+                        if (qrBitmap != null) Image(bitmap = qrBitmap.asImageBitmap(), contentDescription = "QR", modifier = Modifier.size(170.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).padding(8.dp))
+                        Spacer(Modifier.height(8.dp))
+                        Text("🌐 $remoteUrl", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = theme.primary)
                     }
                 }
             }
         }
 
-        // 2. ВЫБОР ПЛЕЕРА, АРХИВ, ЧАСЫ И УПРАВЛЕНИЕ
+        // 2. ВИДЕОПЛЕЕР
         ExpandableSectionRow(S.catPlayer, expandedRow == 1, theme, { toggleRow(1) }) {
             val engineOpts = listOf(
-                "0" to (if (S.isRu) "🎬 Встроенный ExoPlayer (Media3 — ТВ-Гид, 4-экран, жесты)" else "🎬 Built-in ExoPlayer (Media3)"),
-                "1" to (if (S.isRu) "📱 Системный плеер Android (Native VideoView)" else "📱 Native Android Player"),
-                "2" to (if (S.isRu) "🚀 Внешний плеер (VLC, MX Player, Vimu, Just)" else "🚀 External Player (VLC / MX / Vimu)")
+                "0" to (if (S.isRu) "Встроенный (ExoPlayer)" else "Built-in (ExoPlayer)"),
+                "1" to (if (S.isRu) "Системный (Android)" else "System (Android)"),
+                "2" to (if (S.isRu) "Внешний (VLC / MX)" else "External (VLC / MX)")
             )
-            SourceDropdownSelector(
-                label = if (S.isRu) "🎬 Блок выбора видеоплеера (Движок):" else "🎬 Video Player Engine:",
-                selectedTitle = engineOpts.find { it.first == playerEngine.toString() }?.second ?: engineOpts.first().second,
-                options = engineOpts,
-                theme = theme,
-                onSelect = { onPlayerEngineChange(it.toIntOrNull() ?: 0) }
-            )
+            SourceDropdownSelector(if (S.isRu) "Плеер:" else "Player:", engineOpts.find { it.first == playerEngine.toString() }?.second ?: engineOpts.first().second, engineOpts, theme) { onPlayerEngineChange(it.toIntOrNull() ?: 0) }
 
-            val archiveOpts = listOf(
-                "1" to (if (S.isRu) "⏪ 1 день назад" else "⏪ 1 Day Back"),
-                "3" to (if (S.isRu) "⏪ 3 дня назад" else "⏪ 3 Days Back"),
-                "5" to (if (S.isRu) "⏪ 5 дней назад" else "⏪ 5 Days Back")
-            )
-            SourceDropdownSelector(
-                label = if (S.isRu) "Размер архива (перемотка назад):" else "Archive Depth:",
-                selectedTitle = archiveOpts.find { it.first == archiveDays.toString() }?.second ?: archiveOpts[1].second,
-                options = archiveOpts,
-                theme = theme,
-                onSelect = { onArchiveDaysChange(it.toIntOrNull() ?: 3) }
-            )
-
-            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(if (S.isRu) "Открывать канал сразу на полный экран при выборе" else "Open channel in fullscreen on tap", fontWeight = FontWeight.Bold, color = theme.text, modifier = Modifier.weight(1f))
+            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(theme.bg).padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(if (S.isRu) "Сразу на весь экран" else "Auto Fullscreen", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = theme.text)
                 Switch(checked = openFullscreenOnTap, onCheckedChange = onAutoFsChange)
             }
 
-            val clockOpts = listOf(
-                "0" to (if (S.isRu) "🚫 Выключены" else "🚫 Off"),
-                "1" to (if (S.isRu) "↖️ В левом верхнем углу плеера" else "↖️ Top-Left in Player"),
-                "2" to (if (S.isRu) "↗️ В правом верхнем углу плеера" else "↗️ Top-Right in Player")
-            )
-            SourceDropdownSelector(
-                label = if (S.isRu) "🕒 Часы реального времени (только в плеере):" else "🕒 Clock (Only inside Player):",
-                selectedTitle = clockOpts.find { it.first == clockPosition.toString() }?.second ?: clockOpts.first().second,
-                options = clockOpts,
-                theme = theme,
-                onSelect = { onClockPositionChange(it.toIntOrNull() ?: 0) }
-            )
+            val resizeOpts = listOf("0" to "По размеру", "1" to "На весь экран (16:9)", "2" to "Обрезка (Zoom)")
+            SourceDropdownSelector(if (S.isRu) "Формат:" else "Aspect:", resizeOpts.find { it.first == playerResizeMode.toString() }?.second ?: resizeOpts.first().second, resizeOpts, theme) { onPlayerResizeChange(it.toIntOrNull() ?: 0) }
 
-            Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(if (S.isRu) "🔒 Родительский контроль (PIN-код на 18+)" else "🔒 Parental Control (18+ PIN)", fontWeight = FontWeight.Bold, color = theme.text, modifier = Modifier.weight(1f))
-                    Switch(checked = parentalEnabled, onCheckedChange = onParentalEnabledChange)
-                }
-                if (parentalEnabled) {
-                    OutlinedTextField(
-                        value = parentalPin,
-                        onValueChange = { if (it.length <= 4) onParentalPinChange(it.filter { c -> c.isDigit() }) },
-                        label = { Text(if (S.isRu) "PIN-код (4 цифры, по умолчанию 0000)" else "4-Digit PIN") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            }
+            val clockOpts = listOf("0" to "Выкл", "1" to "Слева вверху", "2" to "Справа вверху")
+            SourceDropdownSelector(if (S.isRu) "Часы в плеере:" else "Clock:", clockOpts.find { it.first == clockPosition.toString() }?.second ?: "Выкл", clockOpts, theme) { onClockPositionChange(it.toIntOrNull() ?: 0) }
 
-            val devOpts = listOf(
-                "mobile" to (if (S.isRu) "📱 Смартфон / Планшет" else "📱 Smartphone / Tablet"),
-                "tv" to (if (S.isRu) "📺 Телевизор / ТВ-приставка" else "📺 Android TV / TV Box")
-            )
-            SourceDropdownSelector(if (S.isRu) "Тип устройства:" else "Device Type:", devOpts.find { it.first == deviceType }?.second ?: devOpts.first().second, devOpts, theme, onDeviceTypeChange)
+            val archiveOpts = listOf("1" to "1 день", "3" to "3 дня", "5" to "5 дней")
+            SourceDropdownSelector(if (S.isRu) "Архив:" else "Archive:", archiveOpts.find { it.first == archiveDays.toString() }?.second ?: "3 дня", archiveOpts, theme) { onArchiveDaysChange(it.toIntOrNull() ?: 3) }
 
-            val ctrlOpts = listOf(
-                "touch" to (if (S.isRu) "👆 Сенсорное (Свайпы яркости и громкости)" else "👆 Touch (Brightness & Volume Swipes)"),
-                "remote" to (if (S.isRu) "🎮 Пульт ДУ (Кнопки навигации)" else "🎮 TV Remote")
-            )
-            SourceDropdownSelector(if (S.isRu) "Режим управления:" else "Control Mode:", ctrlOpts.find { it.first == controlMode }?.second ?: ctrlOpts.first().second, ctrlOpts, theme, onControlModeChange)
-
-            val resizeOpts = listOf(
-                "0" to (if (S.isRu) "📐 По размеру экрана (Fit)" else "📐 Fit Screen"),
-                "1" to (if (S.isRu) "📐 Растянуть 16:9 (Fill)" else "📐 Stretch 16:9"),
-                "2" to (if (S.isRu) "📐 Увеличить с обрезкой (Zoom)" else "📐 Zoom Crop")
-            )
-            SourceDropdownSelector(
-                label = if (S.isRu) "Формат изображения:" else "Aspect Ratio:",
-                selectedTitle = resizeOpts.find { it.first == playerResizeMode.toString() }?.second ?: resizeOpts.first().second,
-                options = resizeOpts,
-                theme = theme,
-                onSelect = { onPlayerResizeChange(it.toIntOrNull() ?: 0) }
-            )
-
-            val bufOpts = listOf(
-                "0" to (if (S.isRu) "🚀 Быстрый старт (2 сек)" else "🚀 Fast (2s)"),
-                "1" to (if (S.isRu) "⚖️ Сбалансированный (5 сек)" else "⚖️ Balanced (5s)"),
-                "2" to (if (S.isRu) "🛡 Макс. стабильность (12 сек)" else "🛡 Max Stability (12s)")
-            )
-            SourceDropdownSelector(
-                label = if (S.isRu) "Буфер ExoPlayer:" else "ExoPlayer Buffer:",
-                selectedTitle = bufOpts.find { it.first == playerBufferMode.toString() }?.second ?: bufOpts[1].second,
-                options = bufOpts,
-                theme = theme,
-                onSelect = { onPlayerBufferChange(it.toIntOrNull() ?: 1) }
-            )
+            val bufOpts = listOf("0" to "Быстрый (2 сек)", "1" to "Обычный (5 сек)", "2" to "Большой (12 сек)")
+            SourceDropdownSelector(if (S.isRu) "Буфер:" else "Buffer:", bufOpts.find { it.first == playerBufferMode.toString() }?.second ?: bufOpts[1].second, bufOpts, theme) { onPlayerBufferChange(it.toIntOrNull() ?: 1) }
 
             val uaOpts = listOf(
-                "Lavf/60.3.100" to "Lavf / FFmpeg (По умолчанию)",
-                "Mozilla/5.0 (SmartHub; SMART-TV) OttPlayer/2.0" to "OttPlayer SmartTV",
-                "VLC/3.0.20 LibVLC/3.0.20" to "VLC Media Player",
-                "TiviMate/4.7.0 (Android TV)" to "TiviMate Android TV",
-                "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200" to "MAG250 Set-Top Box"
+                "Lavf/60.3.100" to "Lavf / FFmpeg",
+                "Mozilla/5.0 (SmartHub; SMART-TV) OttPlayer/2.0" to "OttPlayer",
+                "VLC/3.0.20 LibVLC/3.0.20" to "VLC",
+                "TiviMate/4.7.0 (Android TV)" to "TiviMate",
+                "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200" to "MAG250"
             )
-            SourceDropdownSelector(if (S.isRu) "Подпись запроса (User-Agent):" else "User-Agent:", uaOpts.find { it.first == playerDefaultUa }?.second ?: playerDefaultUa, uaOpts, theme, onPlayerUaChange)
+            SourceDropdownSelector("User-Agent:", uaOpts.find { it.first == playerDefaultUa }?.second ?: playerDefaultUa, uaOpts, theme, onPlayerUaChange)
         }
 
-        // 3. ВНЕШНИЙ ВИД, ТЕМЫ И ЯЗЫК
-        ExpandableSectionRow(S.catAppearance, expandedRow == 2, theme, { toggleRow(2) }) {
-            AppThemePalette.entries.forEach { item ->
+        // 3. УСТРОЙСТВО И 18+
+        ExpandableSectionRow(if (S.isRu) "🎮 Устройство и 18+" else "🎮 Device & 18+", expandedRow == 2, theme, { toggleRow(2) }) {
+            val devOpts = listOf("mobile" to (if (S.isRu) "📱 Смартфон" else "📱 Phone"), "tv" to (if (S.isRu) "📺 Телевизор (ТВ)" else "📺 Android TV"))
+            SourceDropdownSelector(if (S.isRu) "Устройство:" else "Device:", devOpts.find { it.first == deviceType }?.second ?: devOpts.first().second, devOpts, theme, onDeviceTypeChange)
+
+            val ctrlOpts = listOf("touch" to (if (S.isRu) "👆 Сенсор" else "👆 Touch"), "remote" to (if (S.isRu) "🎮 Пульт ДУ" else "🎮 Remote"))
+            SourceDropdownSelector(if (S.isRu) "Управление:" else "Controls:", ctrlOpts.find { it.first == controlMode }?.second ?: ctrlOpts.first().second, ctrlOpts, theme, onControlModeChange)
+
+            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(theme.bg).padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(if (S.isRu) "🔒 Защита 18+ (PIN-код)" else "🔒 18+ PIN Lock", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = theme.text)
+                Switch(checked = parentalEnabled, onCheckedChange = onParentalEnabledChange)
+            }
+            if (parentalEnabled) {
+                OutlinedTextField(
+                    value = parentalPin,
+                    onValueChange = { if (it.length <= 4) onParentalPinChange(it.filter { c -> c.isDigit() }) },
+                    label = { Text(if (S.isRu) "PIN-код (4 цифры)" else "4-digit PIN") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        // 4. ТЕМА И ЯЗЫК
+        ExpandableSectionRow(S.catAppearance, expandedRow == 3, theme, { toggleRow(3) }) {
+            Text(if (S.isRu) "Тёмные" else "Dark", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.subtext)
+            AppThemePalette.entries.filter { it.isDark }.forEach { item ->
                 val isChosen = item == theme
                 Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(item.bg)
-                        .border(if (isChosen) 2.5.dp else 1.dp, if (isChosen) item.primary else item.subtext, RoundedCornerShape(12.dp))
-                        .clickable { onSelectTheme(item) }.padding(14.dp),
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(item.bg)
+                        .border(if (isChosen) 2.dp else 1.dp, if (isChosen) item.primary else item.subtext.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        .clickable { onSelectTheme(item) }.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(item.primary))
-                        Spacer(Modifier.width(12.dp))
-                        Text(if (S.isRu) item.titleRu else item.titleEn, fontWeight = FontWeight.Bold, color = item.text)
+                        Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(item.primary))
+                        Spacer(Modifier.width(10.dp))
+                        Text(if (S.isRu) item.titleRu else item.titleEn, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = item.text)
                     }
                     if (isChosen) Icon(Icons.Default.Check, null, tint = item.primary)
                 }
             }
-            Button(onClick = onToggleLanguage, modifier = Modifier.fillMaxWidth().height(50.dp)) {
+
+            Text(if (S.isRu) "Светлые" else "Light", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.subtext, modifier = Modifier.padding(top = 4.dp))
+            AppThemePalette.entries.filter { !it.isDark }.forEach { item ->
+                val isChosen = item == theme
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(item.bg)
+                        .border(if (isChosen) 2.dp else 1.dp, if (isChosen) item.primary else item.subtext.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        .clickable { onSelectTheme(item) }.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(item.primary))
+                        Spacer(Modifier.width(10.dp))
+                        Text(if (S.isRu) item.titleRu else item.titleEn, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = item.text)
+                    }
+                    if (isChosen) Icon(Icons.Default.Check, null, tint = item.primary)
+                }
+            }
+
+            Button(onClick = onToggleLanguage, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Language, null); Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "Язык: Русский 🇷🇺 (Сменить на EN)" else "Language: English 🇬🇧 (Switch to RU)")
+                Text(if (S.isRu) "Язык: Русский 🇷🇺" else "Language: English 🇬🇧", fontWeight = FontWeight.Bold)
             }
         }
 
-        // 4. ИМПОРТ И ЭКСПОРТ НАСТРОЕК
-        ExpandableSectionRow(S.catBackup, expandedRow == 3, theme, { toggleRow(3) }) {
+        // 5. РЕЗЕРВНАЯ КОПИЯ
+        ExpandableSectionRow(S.catBackup, expandedRow == 4, theme, { toggleRow(4) }) {
             Button(onClick = { exportLauncher.launch("CCTV-Plus-Backup.json") }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.UploadFile, null); Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "📤 Экспортировать настройки в файл (.json)" else "📤 Export to File (.json)")
+                Text(if (S.isRu) "Сохранить в файл" else "Export to File")
             }
             Button(onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Download, null); Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "📥 Импортировать настройки из файла (.json)" else "📥 Import from File (.json)")
+                Text(if (S.isRu) "Загрузить из файла" else "Import from File")
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 OutlinedButton(onClick = {
                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cm.setPrimaryClip(ClipData.newPlainText("CCTVBackup", exportAllSettingsToJson(prefs)))
-                    backupStatus = if (S.isRu) "✅ Скопировано в буфер!" else "✅ Copied!"
-                }, modifier = Modifier.weight(1f)) { Text(if (S.isRu) "📋 Копировать" else "📋 Copy") }
+                    backupStatus = if (S.isRu) "✅ Скопировано" else "✅ Copied"
+                }, modifier = Modifier.weight(1f)) { Text(if (S.isRu) "Копировать" else "Copy") }
 
                 OutlinedButton(onClick = {
                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     val clip = cm.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
                     if (importAllSettingsFromJson(prefs, clip)) {
-                        backupStatus = if (S.isRu) "✅ Восстановлено!" else "✅ Restored!"
+                        backupStatus = if (S.isRu) "✅ Загружено" else "✅ Restored"
                         onSettingsImported()
-                    } else backupStatus = "❌ Ошибка буфера"
-                }, modifier = Modifier.weight(1f)) { Text(if (S.isRu) "📋 Вставить" else "📋 Paste") }
+                    } else backupStatus = "❌ Ошибка"
+                }, modifier = Modifier.weight(1f)) { Text(if (S.isRu) "Вставить" else "Paste") }
             }
             if (backupStatus.isNotBlank()) Text(backupStatus, fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
         }
 
-        // 5. СПИСОК ИЗМЕНЕНИЙ
-        ExpandableSectionRow(S.catChangelog, expandedRow == 4, theme, { toggleRow(4) }) {
+        // 6. ЧТО НОВОГО
+        ExpandableSectionRow(S.catChangelog, expandedRow == 5, theme, { toggleRow(5) }) {
             AppChangelogHistory.forEachIndexed { idx, rel ->
-                val verTitle = if (idx == 0 || rel.version == "CURRENT") "v$installedVerName (Build #$installedVerCode • Текущая)" else rel.version
-                Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                val verTitle = if (idx == 0 || rel.version == "CURRENT") "v$installedVerName (#$installedVerCode)" else rel.version
+                Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(verTitle, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = theme.primary)
-                        Text(rel.date, fontSize = 12.sp, color = theme.subtext)
+                        Text(verTitle, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = theme.primary)
+                        Text(rel.date, fontSize = 11.sp, color = theme.subtext)
                     }
-                    (if (S.isRu) rel.changesRu else rel.changesEn).forEach { Text(it, fontSize = 13.sp, color = theme.text) }
+                    (if (S.isRu) rel.changesRu else rel.changesEn).forEach { Text(it, fontSize = 12.sp, color = theme.text) }
                 }
             }
         }
 
-        // 6. СООБЩИТЬ О ПРОБЛЕМЕ
-        ExpandableSectionRow(S.catReportIssue, expandedRow == 5, theme, { toggleRow(5) }) {
-            OutlinedTextField(value = issueDescription, onValueChange = { issueDescription = it }, label = { Text(if (S.isRu) "Опишите проблему..." else "Describe the issue...") }, modifier = Modifier.fillMaxWidth())
+        // 7. ПОДДЕРЖКА
+        ExpandableSectionRow(S.catReportIssue, expandedRow == 6, theme, { toggleRow(6) }) {
+            OutlinedTextField(value = issueDescription, onValueChange = { issueDescription = it }, label = { Text(if (S.isRu) "Опишите проблему" else "Describe issue") }, modifier = Modifier.fillMaxWidth())
             Button(
                 onClick = {
                     val reportText = "=== CCTV Plus Report ===\nVer: v$installedVerName (#$installedVerCode)\nDevice: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})\nMode: $deviceType/$controlMode | Engine: $playerEngine | Archive: ${archiveDays}d\nEPG: $epgStatusText\nVPortal: ${maskSensitiveKeys(vportalDiagnostic)}\nComment: $issueDescription"
                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cm.setPrimaryClip(ClipData.newPlainText("CCTVBugReport", reportText))
-                    reportStatus = if (S.isRu) "✅ Отчет скопирован в буфер!" else "✅ Report copied!"
+                    reportStatus = if (S.isRu) "✅ Отчет скопирован" else "✅ Report copied"
                 },
                 modifier = Modifier.fillMaxWidth()
-            ) { Icon(Icons.Default.BugReport, null); Spacer(Modifier.width(8.dp)); Text(if (S.isRu) "📋 Скопировать тех. отчет" else "📋 Copy Diagnostic Report", fontWeight = FontWeight.Bold) }
+            ) { Icon(Icons.Default.BugReport, null); Spacer(Modifier.width(8.dp)); Text(if (S.isRu) "Скопировать отчет" else "Copy Report", fontWeight = FontWeight.Bold) }
             OutlinedButton(onClick = {
                 runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/cakecock")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.OpenInNew, null); Spacer(Modifier.width(8.dp)); Text("🌐 GitHub (cakecock)") }
+            }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.OpenInNew, null); Spacer(Modifier.width(8.dp)); Text("GitHub (cakecock)") }
             if (reportStatus.isNotBlank()) Text(reportStatus, fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
         }
 
-        // 7. ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ
-        ExpandableSectionRow(S.catPrivacy, expandedRow == 6, theme, { toggleRow(6) }) {
+        // 8. КОНФИДЕНЦИАЛЬНОСТЬ
+        ExpandableSectionRow(S.catPrivacy, expandedRow == 7, theme, { toggleRow(7) }) {
             (if (S.isRu) PrivacyItemsRu else PrivacyItemsEn).forEach { p ->
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp)) { Text(p, fontSize = 13.sp, color = theme.text) }
+                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(10.dp)) { Text(p, fontSize = 12.sp, color = theme.text) }
             }
         }
 
-        // 8. ЛИЦЕНЗИЯ И УСЛОВИЯ
-        ExpandableSectionRow(S.catLicense, expandedRow == 7, theme, { toggleRow(7) }) {
+        // 9. ЛИЦЕНЗИЯ
+        ExpandableSectionRow(S.catLicense, expandedRow == 8, theme, { toggleRow(8) }) {
             (if (S.isRu) LicenseItemsRu else LicenseItemsEn).forEach { p ->
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp)) { Text(p, fontSize = 13.sp, color = theme.text) }
+                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(10.dp)) { Text(p, fontSize = 12.sp, color = theme.text) }
             }
         }
 
-        // КНОПКА ОБНОВЛЕНИЯ ПРЯМО НАД ИМЕНЕМ РАЗРАБОТЧИКА И НОМЕРОМ ВЕРСИИ
-        Spacer(Modifier.height(4.dp))
+        // ОБНОВЛЕНИЕ + РАЗРАБОТЧИК И ВЕРСИЯ
+        Spacer(Modifier.height(2.dp))
         Column(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(theme.card).border(1.dp, theme.primary.copy(alpha = 0.3f), RoundedCornerShape(14.dp)).padding(14.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -581,17 +532,17 @@ fun AccordionSettingsScreen(
                 onClick = {
                     scope.launch {
                         isUpdating = true; downloadPercent = -1
-                        updateStatus = if (S.isRu) "🔍 Проверяем обновления..." else "🔍 Checking..."
+                        updateStatus = if (S.isRu) "Проверка..." else "Checking..."
                         val res = GitHubUpdater.checkLatestRelease()
                         isUpdating = false
                         res.onSuccess { info ->
                             val remoteBuild = info.versionTag.substringAfterLast(".").filter { it.isDigit() }.toLongOrNull() ?: 0L
                             if ((remoteBuild in 1..installedVerCode) || info.versionTag == "v$installedVerName") {
                                 latestRelease = null
-                                updateStatus = if (S.isRu) "✅ Обновлений нет (версия актуальна)" else "✅ No updates available"
+                                updateStatus = if (S.isRu) "✅ Обновлений нет" else "✅ Up to date"
                             } else {
                                 latestRelease = info
-                                updateStatus = if (S.isRu) "🔥 Доступно обновление: ${info.versionTag}" else "🔥 Update available: ${info.versionTag}"
+                                updateStatus = if (S.isRu) "🔥 Доступна ${info.versionTag}" else "🔥 Available ${info.versionTag}"
                             }
                         }.onFailure { updateStatus = "❌ ${it.localizedMessage}" }
                     }
@@ -601,18 +552,14 @@ fun AccordionSettingsScreen(
             ) {
                 Icon(Icons.Default.SystemUpdate, null)
                 Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "🔄 Проверить обновления" else "🔄 Check for Updates", fontWeight = FontWeight.Bold)
+                Text(if (S.isRu) "Проверить обновления" else "Check for Updates", fontWeight = FontWeight.Bold)
             }
 
             if (isUpdating) {
                 if (downloadPercent in 0..100) LinearProgressIndicator(progress = { downloadPercent / 100f }, modifier = Modifier.fillMaxWidth().height(8.dp), color = theme.primary)
                 else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(5.dp), color = theme.primary)
             }
-
-            if (updateStatus.isNotBlank()) {
-                Text(updateStatus, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
-            }
-
+            if (updateStatus.isNotBlank()) Text(updateStatus, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
             if (latestRelease != null) {
                 Button(
                     onClick = {
@@ -621,10 +568,10 @@ fun AccordionSettingsScreen(
                             isUpdating = true; downloadPercent = 0
                             val dl = GitHubUpdater.downloadAndInstall(context, info.downloadUrl) { pct, dlMb, totMb ->
                                 downloadPercent = pct
-                                updateStatus = "⏳ Скачивание: $pct% ($dlMb МБ из $totMb МБ)"
+                                updateStatus = "⏳ $pct% ($dlMb / $totMb МБ)"
                             }
                             isUpdating = false
-                            dl.onSuccess { updateStatus = "✅ Скачано (100%)! Открыто окно установки." }
+                            dl.onSuccess { updateStatus = "✅ Скачано (100%)" }
                                 .onFailure { updateStatus = "❌ ${it.localizedMessage}" }
                         }
                     },
@@ -633,13 +580,13 @@ fun AccordionSettingsScreen(
                 ) {
                     Icon(Icons.Default.CloudDownload, null)
                     Spacer(Modifier.width(8.dp))
-                    Text("⬇️ Скачать и установить ${latestRelease!!.versionTag}", fontWeight = FontWeight.Bold)
+                    Text("Установить ${latestRelease!!.versionTag}", fontWeight = FontWeight.Bold)
                 }
             }
 
-            HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 2.dp))
-            Text("📺 CCTV Plus • v$installedVerName (Build #$installedVerCode)", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = theme.primary)
-            Text(if (S.isRu) "👨‍💻 Разработчик: cakecock © 2026" else "👨‍💻 Developer: cakecock © 2026", fontWeight = FontWeight.Medium, fontSize = 13.sp, color = theme.subtext)
+            HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f))
+            Text("CCTV Plus • v$installedVerName (Build #$installedVerCode)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = theme.primary)
+            Text(if (S.isRu) "Разработчик: cakecock © 2026" else "Developer: cakecock © 2026", fontSize = 12.sp, color = theme.subtext)
         }
     }
 }
