@@ -362,7 +362,6 @@ fun AccordionSettingsScreen(
 
         // 2. ВЫБОР ПЛЕЕРА, АРХИВ, ЧАСЫ И УПРАВЛЕНИЕ
         ExpandableSectionRow(S.catPlayer, expandedRow == 1, theme, { toggleRow(1) }) {
-            // Блок выбора движка видеоплеера!
             val engineOpts = listOf(
                 "0" to (if (S.isRu) "🎬 Встроенный ExoPlayer (Media3 — ТВ-Гид, 4-экран, жесты)" else "🎬 Built-in ExoPlayer (Media3)"),
                 "1" to (if (S.isRu) "📱 Системный плеер Android (Native VideoView)" else "📱 Native Android Player"),
@@ -525,37 +524,95 @@ fun AccordionSettingsScreen(
             if (backupStatus.isNotBlank()) Text(backupStatus, fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
         }
 
-        // 5. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ
-        ExpandableSectionRow(if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)", expandedRow == 4, theme, { toggleRow(4) }) {
-            Text(if (S.isRu) "Установленная версия: v$installedVerName (Build #$installedVerCode)" else "Installed: v$installedVerName (Build #$installedVerCode)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = theme.subtext)
+        // 5. СПИСОК ИЗМЕНЕНИЙ
+        ExpandableSectionRow(S.catChangelog, expandedRow == 4, theme, { toggleRow(4) }) {
+            AppChangelogHistory.forEachIndexed { idx, rel ->
+                val verTitle = if (idx == 0 || rel.version == "CURRENT") "v$installedVerName (Build #$installedVerCode • Текущая)" else rel.version
+                Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(verTitle, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = theme.primary)
+                        Text(rel.date, fontSize = 12.sp, color = theme.subtext)
+                    }
+                    (if (S.isRu) rel.changesRu else rel.changesEn).forEach { Text(it, fontSize = 13.sp, color = theme.text) }
+                }
+            }
+        }
+
+        // 6. СООБЩИТЬ О ПРОБЛЕМЕ
+        ExpandableSectionRow(S.catReportIssue, expandedRow == 5, theme, { toggleRow(5) }) {
+            OutlinedTextField(value = issueDescription, onValueChange = { issueDescription = it }, label = { Text(if (S.isRu) "Опишите проблему..." else "Describe the issue...") }, modifier = Modifier.fillMaxWidth())
+            Button(
+                onClick = {
+                    val reportText = "=== CCTV Plus Report ===\nVer: v$installedVerName (#$installedVerCode)\nDevice: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})\nMode: $deviceType/$controlMode | Engine: $playerEngine | Archive: ${archiveDays}d\nEPG: $epgStatusText\nVPortal: ${maskSensitiveKeys(vportalDiagnostic)}\nComment: $issueDescription"
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("CCTVBugReport", reportText))
+                    reportStatus = if (S.isRu) "✅ Отчет скопирован в буфер!" else "✅ Report copied!"
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) { Icon(Icons.Default.BugReport, null); Spacer(Modifier.width(8.dp)); Text(if (S.isRu) "📋 Скопировать тех. отчет" else "📋 Copy Diagnostic Report", fontWeight = FontWeight.Bold) }
+            OutlinedButton(onClick = {
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/cakecock")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.OpenInNew, null); Spacer(Modifier.width(8.dp)); Text("🌐 GitHub (cakecock)") }
+            if (reportStatus.isNotBlank()) Text(reportStatus, fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
+        }
+
+        // 7. ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ
+        ExpandableSectionRow(S.catPrivacy, expandedRow == 6, theme, { toggleRow(6) }) {
+            (if (S.isRu) PrivacyItemsRu else PrivacyItemsEn).forEach { p ->
+                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp)) { Text(p, fontSize = 13.sp, color = theme.text) }
+            }
+        }
+
+        // 8. ЛИЦЕНЗИЯ И УСЛОВИЯ
+        ExpandableSectionRow(S.catLicense, expandedRow == 7, theme, { toggleRow(7) }) {
+            (if (S.isRu) LicenseItemsRu else LicenseItemsEn).forEach { p ->
+                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp)) { Text(p, fontSize = 13.sp, color = theme.text) }
+            }
+        }
+
+        // КНОПКА ОБНОВЛЕНИЯ ПРЯМО НАД ИМЕНЕМ РАЗРАБОТЧИКА И НОМЕРОМ ВЕРСИИ
+        Spacer(Modifier.height(4.dp))
+        Column(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(theme.card).border(1.dp, theme.primary.copy(alpha = 0.3f), RoundedCornerShape(14.dp)).padding(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             Button(
                 onClick = {
                     scope.launch {
                         isUpdating = true; downloadPercent = -1
-                        updateStatus = if (S.isRu) "🔍 Проверяем GitHub..." else "🔍 Checking GitHub..."
+                        updateStatus = if (S.isRu) "🔍 Проверяем обновления..." else "🔍 Checking..."
                         val res = GitHubUpdater.checkLatestRelease()
                         isUpdating = false
                         res.onSuccess { info ->
                             val remoteBuild = info.versionTag.substringAfterLast(".").filter { it.isDigit() }.toLongOrNull() ?: 0L
                             if ((remoteBuild in 1..installedVerCode) || info.versionTag == "v$installedVerName") {
                                 latestRelease = null
-                                updateStatus = if (S.isRu) "✅ У вас установлена последняя версия (v$installedVerName) — обновлений нет" else "✅ Latest version installed — no updates"
+                                updateStatus = if (S.isRu) "✅ Обновлений нет (версия актуальна)" else "✅ No updates available"
                             } else {
                                 latestRelease = info
-                                updateStatus = if (S.isRu) "🔥 Доступно новое обновление: ${info.versionTag}" else "🔥 New update available: ${info.versionTag}"
+                                updateStatus = if (S.isRu) "🔥 Доступно обновление: ${info.versionTag}" else "🔥 Update available: ${info.versionTag}"
                             }
                         }.onFailure { updateStatus = "❌ ${it.localizedMessage}" }
                     }
                 },
                 enabled = !isUpdating,
                 modifier = Modifier.fillMaxWidth()
-            ) { Icon(Icons.Default.SystemUpdate, null); Spacer(Modifier.width(8.dp)); Text(if (S.isRu) "Проверить наличие обновлений" else "Check for Updates") }
+            ) {
+                Icon(Icons.Default.SystemUpdate, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (S.isRu) "🔄 Проверить обновления" else "🔄 Check for Updates", fontWeight = FontWeight.Bold)
+            }
 
             if (isUpdating) {
                 if (downloadPercent in 0..100) LinearProgressIndicator(progress = { downloadPercent / 100f }, modifier = Modifier.fillMaxWidth().height(8.dp), color = theme.primary)
-                else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(6.dp), color = theme.primary)
+                else LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(5.dp), color = theme.primary)
             }
-            if (updateStatus.isNotBlank()) Text(updateStatus, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
+
+            if (updateStatus.isNotBlank()) {
+                Text(updateStatus, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
+            }
+
             if (latestRelease != null) {
                 Button(
                     onClick = {
@@ -573,63 +630,15 @@ fun AccordionSettingsScreen(
                     },
                     enabled = !isUpdating,
                     modifier = Modifier.fillMaxWidth()
-                ) { Icon(Icons.Default.CloudDownload, null); Spacer(Modifier.width(8.dp)); Text("⬇️ Скачать и установить ${latestRelease!!.versionTag}", fontWeight = FontWeight.Bold) }
-            }
-        }
-
-        // 6. СПИСОК ИЗМЕНЕНИЙ
-        ExpandableSectionRow(S.catChangelog, expandedRow == 5, theme, { toggleRow(5) }) {
-            AppChangelogHistory.forEachIndexed { idx, rel ->
-                val verTitle = if (idx == 0 || rel.version == "CURRENT") "v$installedVerName (Build #$installedVerCode • Текущая)" else rel.version
-                Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(verTitle, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = theme.primary)
-                        Text(rel.date, fontSize = 12.sp, color = theme.subtext)
-                    }
-                    (if (S.isRu) rel.changesRu else rel.changesEn).forEach { Text(it, fontSize = 13.sp, color = theme.text) }
+                ) {
+                    Icon(Icons.Default.CloudDownload, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("⬇️ Скачать и установить ${latestRelease!!.versionTag}", fontWeight = FontWeight.Bold)
                 }
             }
-        }
 
-        // 7. СООБЩИТЬ О ПРОБЛЕМЕ
-        ExpandableSectionRow(S.catReportIssue, expandedRow == 6, theme, { toggleRow(6) }) {
-            OutlinedTextField(value = issueDescription, onValueChange = { issueDescription = it }, label = { Text(if (S.isRu) "Опишите проблему..." else "Describe the issue...") }, modifier = Modifier.fillMaxWidth())
-            Button(
-                onClick = {
-                    val reportText = "=== CCTV Plus Report ===\nVer: v$installedVerName (#$installedVerCode)\nDevice: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})\nMode: $deviceType/$controlMode | Engine: $playerEngine | Archive: ${archiveDays}d\nEPG: $epgStatusText\nVPortal: ${maskSensitiveKeys(vportalDiagnostic)}\nComment: $issueDescription"
-                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cm.setPrimaryClip(ClipData.newPlainText("CCTVBugReport", reportText))
-                    reportStatus = if (S.isRu) "✅ Отчет скопирован в буфер!" else "✅ Report copied!"
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Icon(Icons.Default.BugReport, null); Spacer(Modifier.width(8.dp)); Text(if (S.isRu) "📋 Скопировать тех. отчет" else "📋 Copy Diagnostic Report", fontWeight = FontWeight.Bold) }
-            OutlinedButton(onClick = {
-                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/cakecock")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.OpenInNew, null); Spacer(Modifier.width(8.dp)); Text("🌐 GitHub (cakecock)") }
-            if (reportStatus.isNotBlank()) Text(reportStatus, fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
-        }
-
-        // 8. ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ
-        ExpandableSectionRow(S.catPrivacy, expandedRow == 7, theme, { toggleRow(7) }) {
-            (if (S.isRu) PrivacyItemsRu else PrivacyItemsEn).forEach { p ->
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp)) { Text(p, fontSize = 13.sp, color = theme.text) }
-            }
-        }
-
-        // 9. ЛИЦЕНЗИЯ И УСЛОВИЯ
-        ExpandableSectionRow(S.catLicense, expandedRow == 8, theme, { toggleRow(8) }) {
-            (if (S.isRu) LicenseItemsRu else LicenseItemsEn).forEach { p ->
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp)) { Text(p, fontSize = 13.sp, color = theme.text) }
-            }
-        }
-
-        Spacer(Modifier.height(6.dp))
-        Column(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(theme.card).border(1.dp, theme.primary.copy(alpha = 0.3f), RoundedCornerShape(14.dp)).padding(vertical = 16.dp, horizontal = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
+            HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 2.dp))
             Text("📺 CCTV Plus • v$installedVerName (Build #$installedVerCode)", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = theme.primary)
-            Spacer(Modifier.height(4.dp))
             Text(if (S.isRu) "👨‍💻 Разработчик: cakecock © 2026" else "👨‍💻 Developer: cakecock © 2026", fontWeight = FontWeight.Medium, fontSize = 13.sp, color = theme.subtext)
         }
     }
