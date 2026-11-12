@@ -4,6 +4,7 @@ import android.content.SharedPreferences
 import androidx.compose.ui.graphics.Color
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 data class NamedSource(val id: String, val name: String, val url: String)
 
@@ -27,6 +28,14 @@ data class EpgProgramItem(
     val timeRangeText: String
 )
 
+data class ProgramReminder(
+    val id: String,
+    val channelId: String,
+    val channelName: String,
+    val programTitle: String,
+    val startMs: Long
+)
+
 data class VodMovie(
     val id: String,
     val title: String,
@@ -39,6 +48,16 @@ data class VodMovie(
     val isFolder: Boolean = false,
     val requestPayloadJson: String? = null,
     val targetApiUrl: String? = null
+)
+
+data class VodProgressItem(
+    val key: String,
+    val title: String,
+    val posterUrl: String?,
+    val streamUrl: String,
+    val positionMs: Long,
+    val durationMs: Long,
+    val updatedAt: Long
 )
 
 data class M3uParseResult(
@@ -59,39 +78,50 @@ val AppChangelogHistory = listOf(
         version = "CURRENT",
         date = "12.11.2026",
         changesRu = listOf(
-            "✨ Полная переработка меню Настроек: короткие и понятные названия, логичный порядок разделов и компактный вид.",
-            "🎮 Настройки устройства, управления и защиты 18+ (PIN) вынесены в отдельный удобный раздел.",
-            "🎨 Темы оформления разделены на группы «Тёмные» и «Светлые» с лаконичными названиями."
+            "🎮 Полная поддержка ТВ-пульта в полном экране: переключение каналов стрелками Вверх/Вниз, ввод номера канала цифрами (0-9) и быстрый вызов ТВ-Гида кнопкой ОК/Влево.",
+            "👁 Редактор категорий: скрытие ненужных групп плейлиста прямо с экрана ТВ и из Настроек.",
+            "🎬 Прокачка Кинозала: карточка с описанием фильма, автозапоминание минуты просмотра и лента «Продолжить просмотр».",
+            "⏱ Таймер сна (15/30/60/90 мин), значок качества видео (4K / 1080p / FPS), скорость (1.25x–2x) и перемотка ±10 сек.",
+            "🔔 Напоминания в Телепрограмме: уведомление о начале будущего фильма или матча с быстрым переключением."
         ),
         changesEn = listOf(
-            "✨ Complete Settings redesign: shorter, clearer labels and logical section order.",
-            "🎮 Separated Device, Control Mode, and 18+ PIN into a dedicated section.",
-            "🎨 Grouped themes cleanly into Dark and Light sections."
+            "🎮 Full TV Remote control in fullscreen: D-Pad Up/Down channel zapping, digit channel entry (0-9), and OK/Left for TV Guide.",
+            "👁 Category Manager: hide unwanted playlist groups directly from Live TV or Settings.",
+            "🎬 Upgraded VOD: rich Movie Details card, auto-resume playback position, and 'Continue Watching' bar.",
+            "⏱ Sleep Timer (15/30/60/90m), video quality badge (4K / 1080p / FPS), playback speed (1.25x-2x), and ±10s seek.",
+            "🔔 EPG Program Reminders with automatic switch prompt."
+        )
+    ),
+    ChangelogRelease(
+        version = "v1.62",
+        date = "12.11.2026",
+        changesRu = listOf(
+            "✨ Полная переработка меню Настроек: короткие названия, логичный порядок разделов и компактный вид."
+        ),
+        changesEn = listOf(
+            "✨ Complete Settings redesign with concise labels and logical order."
         )
     ),
     ChangelogRelease(
         version = "v1.60",
         date = "12.11.2026",
         changesRu = listOf(
-            "🎬 Добавлен выбор движка плеера (ExoPlayer / Системный / Внешний), глубина архива (1, 3, 5 дней) и часы строго внутри плеера.",
-            "🔄 Кнопка проверки обновлений перенесена прямо над именем разработчика."
+            "🎬 Выбор движка плеера (ExoPlayer / Системный / Внешний), глубина архива (1, 3, 5 дней) и часы внутри плеера."
         ),
         changesEn = listOf(
-            "🎬 Added Player Engine selector, Catch-Up depth (1/3/5 days), and player-only clock.",
-            "🔄 Moved Update button right above the developer signature."
-        )
-    ),
-    ChangelogRelease(
-        version = "v1.50",
-        date = "12.11.2026",
-        changesRu = listOf(
-            "📺 Прозрачный 3-колоночный ТВ-Гид поверх видео + Мультиэкран на 4 канала + свайпы яркости и громкости."
-        ),
-        changesEn = listOf(
-            "📺 Transparent 3-column TV Guide overlay + 4-channel Multi-View + swipe gestures."
+            "🎬 Added Player Engine selector, Catch-Up depth (1/3/5 days), and player-only clock."
         )
     )
 )
+
+fun formatTimeDuration(ms: Long): String {
+    val totalSec = (ms / 1000L).coerceAtLeast(0L)
+    val h = totalSec / 3600L
+    val m = (totalSec % 3600L) / 60L
+    val s = totalSec % 60L
+    return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, s)
+    else String.format(Locale.US, "%02d:%02d", m, s)
+}
 
 fun isAdultCategoryOrChannel(text: String): Boolean {
     val low = text.lowercase()
@@ -116,7 +146,7 @@ val LicenseItemsEn = listOf(
 )
 
 val PrivacyItemsRu = listOf(
-    "1. Локальное хранение: Все плейлисты, ключи порталов, MAC-адреса и избранное хранятся только в памяти вашего устройства.",
+    "1. Локальное хранение: Все плейлисты, ключи порталов, история просмотра, MAC-адреса и избранное хранятся только в памяти вашего устройства.",
     "2. Без слежки и рекламы: Приложение не собирает личные данные, не отслеживает просмотры и не содержит рекламы.",
     "3. Интернет: Используется только для подключения к вашим серверам ТВ/EPG и к GitHub при проверке обновлений.",
     "4. QR-загрузка: Веб-сервер работает только внутри вашей домашней Wi-Fi сети.",
@@ -124,7 +154,7 @@ val PrivacyItemsRu = listOf(
 )
 
 val PrivacyItemsEn = listOf(
-    "1. Local Storage: All playlists, portal keys, MAC addresses, and favorites stay strictly on your device.",
+    "1. Local Storage: All playlists, portal keys, watch history, MAC addresses, and favorites stay strictly on your device.",
     "2. No Tracking & Ads: Zero personal data collection, zero analytics, and zero ads.",
     "3. Network: Connects only to your configured IPTV/EPG servers and GitHub for updates.",
     "4. QR Loader: Runs strictly inside your local home Wi-Fi network.",
@@ -297,6 +327,52 @@ fun maskSensitiveKeys(text: String): String {
         .replace(Regex("\"key\"\\s*:\\s*\"[^\"]+\""), "\"key\":\"***HIDDEN***\"")
 }
 
+fun loadHiddenGroups(prefs: SharedPreferences): Set<String> =
+    prefs.getStringSet("hidden_groups", emptySet())?.toSet() ?: emptySet()
+
+fun saveHiddenGroups(prefs: SharedPreferences, groups: Set<String>) {
+    prefs.edit().putStringSet("hidden_groups", groups).apply()
+}
+
+fun loadVodHistory(prefs: SharedPreferences): List<VodProgressItem> {
+    val raw = prefs.getString("vod_history_json", null) ?: return emptyList()
+    val list = mutableListOf<VodProgressItem>()
+    runCatching {
+        val arr = JSONArray(raw)
+        for (i in 0 until arr.length()) {
+            val o = arr.getJSONObject(i)
+            list.add(
+                VodProgressItem(
+                    key = o.optString("key"),
+                    title = o.optString("title"),
+                    posterUrl = o.optString("posterUrl").ifEmpty { null },
+                    streamUrl = o.optString("streamUrl"),
+                    positionMs = o.optLong("positionMs", 0L),
+                    durationMs = o.optLong("durationMs", 0L),
+                    updatedAt = o.optLong("updatedAt", 0L)
+                )
+            )
+        }
+    }
+    return list.sortedByDescending { it.updatedAt }
+}
+
+fun saveVodProgressItem(prefs: SharedPreferences, item: VodProgressItem): List<VodProgressItem> {
+    val current = loadVodHistory(prefs).filterNot { it.key == item.key || it.streamUrl == item.streamUrl }.toMutableList()
+    current.add(0, item)
+    val trimmed = current.take(20)
+    val arr = JSONArray()
+    trimmed.forEach { v ->
+        val o = JSONObject()
+        o.put("key", v.key); o.put("title", v.title); o.put("posterUrl", v.posterUrl ?: "")
+        o.put("streamUrl", v.streamUrl); o.put("positionMs", v.positionMs)
+        o.put("durationMs", v.durationMs); o.put("updatedAt", v.updatedAt)
+        arr.put(o)
+    }
+    prefs.edit().putString("vod_history_json", arr.toString()).apply()
+    return trimmed
+}
+
 fun loadNamedList(prefs: SharedPreferences, jsonKey: String, legacySingleKey: String, defaultName: String): List<NamedSource> {
     val raw = prefs.getString(jsonKey, null)
     if (!raw.isNullOrBlank()) {
@@ -351,16 +427,18 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     val favArr = JSONArray()
     prefs.getStringSet("favs", emptySet())?.forEach { favArr.put(it) }
     root.put("favs", favArr)
+    val hidArr = JSONArray()
+    prefs.getStringSet("hidden_groups", emptySet())?.forEach { hidArr.put(it) }
+    root.put("hidden_groups", hidArr)
     return root.toString(2)
 }
 
 fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolean = runCatching {
     val root = JSONObject(jsonStr.trim())
     val favSet = mutableSetOf<String>()
-    val favArr = root.optJSONArray("favs")
-    if (favArr != null) {
-        for (i in 0 until favArr.length()) favSet.add(favArr.getString(i))
-    }
+    root.optJSONArray("favs")?.let { arr -> for (i in 0 until arr.length()) favSet.add(arr.getString(i)) }
+    val hidSet = mutableSetOf<String>()
+    root.optJSONArray("hidden_groups")?.let { arr -> for (i in 0 until arr.length()) hidSet.add(arr.getString(i)) }
     prefs.edit()
         .putBoolean("lang_selected", true)
         .putString("lang", root.optString("lang", "ru"))
@@ -385,6 +463,7 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
         .putString("player_ua", root.optString("player_ua", "Lavf/60.3.100"))
         .putBoolean("player_auto_fs", root.optBoolean("player_auto_fs", false))
         .putStringSet("favs", favSet)
+        .putStringSet("hidden_groups", hidSet)
         .apply()
     true
 }.getOrDefault(false)
