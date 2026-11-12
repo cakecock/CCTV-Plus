@@ -15,7 +15,23 @@ data class Channel(
     val logoUrl: String?,
     val streamUrl: String,
     val epgId: String?,
-    val userAgent: String? = null
+    val userAgent: String? = null,
+    val catchupDays: Int = 3,
+    val catchupSource: String? = null
+)
+
+data class EpgProgramItem(
+    val title: String,
+    val startMs: Long,
+    val stopMs: Long,
+    val timeRangeText: String
+)
+
+data class PlayerSettingsConfig(
+    val resizeMode: Int = 0, // 0 = Fit, 1 = Fill (Растянуть), 2 = Zoom (Обрезка)
+    val bufferMode: Int = 1, // 0 = Быстрый (2с), 1 = Средний (5с), 2 = Большой (12с)
+    val defaultUserAgent: String = "Lavf/60.3.100",
+    val openFullscreenOnTap: Boolean = false
 )
 
 data class VodMovie(
@@ -47,64 +63,67 @@ data class ChangelogRelease(
 
 val AppChangelogHistory = listOf(
     ChangelogRelease(
-        version = "v1.24 (Текущая)",
+        version = "CURRENT",
         date = "12.11.2026",
         changesRu = listOf(
-            "🖼 Новая фирменная векторная иконка приложения CCTV Plus (экран ТВ с неоновой рамкой и знаком Plus).",
-            "🎨 Палитра расширена до 10 тем оформления: 5 Тёмных (добавлены Кинозал Рубин, Глубокий Океан, Тёплый Мокко) и 5 Светлых (добавлены Мятный Сад, Сакура и Роза, Лавандовый Кварц).",
-            "📝 Обновлена документация проекта README.md."
+            "📅 Добавлено интерактивное окно «Телепрограмма и Архив (Catch-Up)»: просмотр расписания канала и запуск прошедших передач в записи одним нажатием.",
+            "🔍 Улучшена привязка телепрограммы (EPG): автоматическое сопоставление каналов как по ID, так и по названию канала.",
+            "⚙️ Добавлен раздел «Настройки видеоплеера»: выбор формата экрана (По размеру / Растянуть 16:9 / Увеличить), размер буфера (Быстрый / Средний / Большой), выбор User-Agent и кнопка пропорций прямо в полноэкранном плеере.",
+            "🔢 Полная синхронизация номера версии между плашкой разработчика и верхним пунктом Чейнжлога."
+        ),
+        changesEn = listOf(
+            "📅 Added interactive TV Guide & Catch-Up Archive window: browse channel schedule and play past broadcasts.",
+            "🔍 Improved EPG matching by both channel ID and display name.",
+            "⚙️ Added Video Player Settings: Aspect Ratio (Fit / Fill / Zoom), Buffer size, User-Agent, and quick aspect ratio button in fullscreen.",
+            "🔢 Synchronized version number between the developer badge and Changelog."
+        )
+    ),
+    ChangelogRelease(
+        version = "v1.24",
+        date = "12.11.2026",
+        changesRu = listOf(
+            "🖼 Новая фирменная векторная иконка приложения CCTV Plus.",
+            "🎨 Палитра расширена до 10 тем оформления (5 Тёмных и 5 Светлых)."
         ),
         changesEn = listOf(
             "🖼 New custom vector app icon for CCTV Plus.",
-            "🎨 Expanded to 10 color themes: 5 Dark (added Cinema Ruby, Deep Ocean, Warm Mocha) and 5 Light (added Mint Garden, Sakura Rose, Lavender Quartz).",
-            "📝 Updated project README.md."
+            "🎨 Expanded to 10 color themes (5 Dark & 5 Light)."
         )
     ),
     ChangelogRelease(
         version = "v1.23",
         date = "12.11.2026",
         changesRu = listOf(
-            "🏷 В нижней части Настроек добавлена карточка с подписью разработчика (cakecock) и автоматическим номером текущей версии и сборки.",
-            "🔄 В меню обновления теперь отображается текущая установленная версия приложения."
+            "🏷 В нижней части Настроек добавлена карточка с подписью разработчика (cakecock) и номером версии.",
+            "📊 Добавлена полоска состояния скачивания обновлений (0% - 100% + МБ) и меню Импорта/Экспорта настроек."
         ),
         changesEn = listOf(
-            "🏷 Added developer signature (cakecock) and automatic version/build badge at the bottom of Settings.",
-            "🔄 Added current installed version display in the Update menu."
-        )
-    ),
-    ChangelogRelease(
-        version = "v1.22",
-        date = "12.11.2026",
-        changesRu = listOf(
-            "📊 Добавлена полоска состояния и точный процент скачивания обновлений (0% - 100% + МБ).",
-            "🎬 Исправлен запуск серий и фильмов в VPortal (глубокий сканер видеопотоков).",
-            "💾 Добавлено меню «Импорт и Экспорт настроек» (файл .json и буфер обмена).",
-            "📜 Добавлено меню «Список изменений (Changelog)».",
-            "🛡 Переход на чистовую сборку Release (V1+V2) для снижения срабатываний Play Защиты."
-        ),
-        changesEn = listOf(
-            "📊 Added real-time progress bar and percentage (0% - 100% + MB) for updates.",
-            "🎬 Fixed episode & movie playback in VPortal with deep stream scanner.",
-            "💾 Added Backup Import & Export menu (.json file and clipboard).",
-            "📜 Added in-app Changelog menu in Settings.",
-            "🛡 Switched to signed Release build (V1+V2)."
-        )
-    ),
-    ChangelogRelease(
-        version = "v1.20",
-        date = "12.11.2026",
-        changesRu = listOf(
-            "♾ Бесконечная автоподгрузка (+50 фильмов) при прокрутке Кинозала до конца.",
-            "📅 Добавлена полоска загрузки и статус обновления EPG в Настройках.",
-            "⭐ Категория «Избранное» перенесена внутрь полоски категорий телеканалов."
-        ),
-        changesEn = listOf(
-            "♾ Infinite auto-scroll pagination (+50 movies) in VPortal VOD.",
-            "📅 Added EPG loading progress bar and status in Settings.",
-            "⭐ Moved Favorites into the dynamic channel categories bar."
+            "🏷 Added developer signature (cakecock) and version badge in Settings.",
+            "📊 Added update download progress bar (0% - 100%) and Backup Import/Export."
         )
     )
 )
+
+// Формирование ссылки на архивную передачу (Catch-Up / Timeshift)
+fun buildArchiveStreamUrl(channel: Channel, startMs: Long, stopMs: Long): String {
+    val startSec = startMs / 1000L
+    val nowSec = System.currentTimeMillis() / 1000L
+    val durationSec = ((stopMs - startMs) / 1000L).coerceAtLeast(60L)
+    val base = channel.streamUrl
+
+    if (!channel.catchupSource.isNullOrBlank()) {
+        return channel.catchupSource
+            .replace("\${start}", startSec.toString())
+            .replace("\${timestamp}", nowSec.toString())
+            .replace("\${offset}", (nowSec - startSec).toString())
+            .replace("\${duration}", durationSec.toString())
+            .replace("{utc}", startSec.toString())
+            .replace("{lutc}", nowSec.toString())
+    }
+
+    val sep = if (base.contains("?")) "&" else "?"
+    return "${base}${sep}utc=$startSec&lutc=$nowSec"
+}
 
 enum class AppThemePalette(
     val id: String,
@@ -119,139 +138,16 @@ enum class AppThemePalette(
     val text: Color,
     val subtext: Color
 ) {
-    // === 5 ТЁМНЫХ ТЕМ ===
-    DARK_EMERALD(
-        id = "dark_emerald",
-        titleRu = "🌑 Тёмная 1: Графит и Изумруд",
-        titleEn = "🌑 Dark 1: Obsidian & Emerald",
-        isDark = true,
-        bg = Color(0xFF121417),
-        card = Color(0xFF1C2026),
-        selectedCard = Color(0xFF19322B),
-        primary = Color(0xFF10B981),
-        onPrimary = Color.Black,
-        text = Color(0xFFF3F4F6),
-        subtext = Color(0xFF9CA3AF)
-    ),
-    DARK_AMETHYST(
-        id = "dark_amethyst",
-        titleRu = "🌌 Тёмная 2: Королевский Аметист",
-        titleEn = "🌌 Dark 2: Royal Amethyst & Gold",
-        isDark = true,
-        bg = Color(0xFF16121E),
-        card = Color(0xFF231D30),
-        selectedCard = Color(0xFF35284D),
-        primary = Color(0xFFF59E0B),
-        onPrimary = Color.Black,
-        text = Color(0xFFFAF5FF),
-        subtext = Color(0xFFB8A9C9)
-    ),
-    DARK_RUBY(
-        id = "dark_ruby",
-        titleRu = "🎬 Тёмная 3: Кинозал Рубин",
-        titleEn = "🎬 Dark 3: Cinema Ruby",
-        isDark = true,
-        bg = Color(0xFF0F0F12),
-        card = Color(0xFF1A1A22),
-        selectedCard = Color(0xFF3B1520),
-        primary = Color(0xFFE11D48),
-        onPrimary = Color.White,
-        text = Color(0xFFF8FAFC),
-        subtext = Color(0xFF94A3B8)
-    ),
-    DARK_OCEAN(
-        id = "dark_ocean",
-        titleRu = "🌊 Тёмная 4: Глубокий Океан",
-        titleEn = "🌊 Dark 4: Deep Ocean Sapphire",
-        isDark = true,
-        bg = Color(0xFF0B132B),
-        card = Color(0xFF1C2541),
-        selectedCard = Color(0xFF1E3A5F),
-        primary = Color(0xFF38BDF8),
-        onPrimary = Color.Black,
-        text = Color(0xFFF0F9FF),
-        subtext = Color(0xFF93C5FD)
-    ),
-    DARK_MOCHA(
-        id = "dark_mocha",
-        titleRu = "☕ Тёмная 5: Тёплый Мокко",
-        titleEn = "☕ Dark 5: Warm Espresso Bronze",
-        isDark = true,
-        bg = Color(0xFF181311),
-        card = Color(0xFF261E1B),
-        selectedCard = Color(0xFF3D2B22),
-        primary = Color(0xFFFB923C),
-        onPrimary = Color.Black,
-        text = Color(0xFFFFF7ED),
-        subtext = Color(0xFFD6BCFA)
-    ),
-
-    // === 5 СВЕТЛЫХ ТЕМ ===
-    LIGHT_NORDIC(
-        id = "light_nordic",
-        titleRu = "☀️ Светлая 1: Скандинавское Утро",
-        titleEn = "☀️ Light 1: Nordic Ocean",
-        isDark = false,
-        bg = Color(0xFFF1F5F9),
-        card = Color(0xFFFFFFFF),
-        selectedCard = Color(0xFFDBEAFE),
-        primary = Color(0xFF2563EB),
-        onPrimary = Color.White,
-        text = Color(0xFF0F172A),
-        subtext = Color(0xFF64748B)
-    ),
-    LIGHT_LATTE(
-        id = "light_latte",
-        titleRu = "🌅 Светлая 2: Тёплый Латте",
-        titleEn = "🌅 Light 2: Warm Sand & Terracotta",
-        isDark = false,
-        bg = Color(0xFFFAF6F0),
-        card = Color(0xFFFFFFFF),
-        selectedCard = Color(0xFFFFEDD5),
-        primary = Color(0xFFEA580C),
-        onPrimary = Color.White,
-        text = Color(0xFF292524),
-        subtext = Color(0xFF78716C)
-    ),
-    LIGHT_MINT(
-        id = "light_mint",
-        titleRu = "🌿 Светлая 3: Мятный Сад",
-        titleEn = "🌿 Light 3: Mint & Forest",
-        isDark = false,
-        bg = Color(0xFFECFDF5),
-        card = Color(0xFFFFFFFF),
-        selectedCard = Color(0xFFD1FAE5),
-        primary = Color(0xFF059669),
-        onPrimary = Color.White,
-        text = Color(0xFF064E3B),
-        subtext = Color(0xFF047857)
-    ),
-    LIGHT_SAKURA(
-        id = "light_sakura",
-        titleRu = "🌸 Светлая 4: Сакура и Роза",
-        titleEn = "🌸 Light 4: Sakura Blossom",
-        isDark = false,
-        bg = Color(0xFFFFF1F2),
-        card = Color(0xFFFFFFFF),
-        selectedCard = Color(0xFFFFE4E6),
-        primary = Color(0xFFDB2777),
-        onPrimary = Color.White,
-        text = Color(0xFF4C0519),
-        subtext = Color(0xFF9F1239)
-    ),
-    LIGHT_LAVENDER(
-        id = "light_lavender",
-        titleRu = "💎 Светлая 5: Лавандовый Кварц",
-        titleEn = "💎 Light 5: Lavender Quartz",
-        isDark = false,
-        bg = Color(0xFFF5F3FF),
-        card = Color(0xFFFFFFFF),
-        selectedCard = Color(0xFFEDE9FE),
-        primary = Color(0xFF7C3AED),
-        onPrimary = Color.White,
-        text = Color(0xFF2E1065),
-        subtext = Color(0xFF6D28D9)
-    );
+    DARK_EMERALD("dark_emerald", "🌑 Тёмная 1: Графит и Изумруд", "🌑 Dark 1: Obsidian & Emerald", true, Color(0xFF121417), Color(0xFF1C2026), Color(0xFF19322B), Color(0xFF10B981), Color.Black, Color(0xFFF3F4F6), Color(0xFF9CA3AF)),
+    DARK_AMETHYST("dark_amethyst", "🌌 Тёмная 2: Королевский Аметист", "🌌 Dark 2: Royal Amethyst & Gold", true, Color(0xFF16121E), Color(0xFF231D30), Color(0xFF35284D), Color(0xFFF59E0B), Color.Black, Color(0xFFFAF5FF), Color(0xFFB8A9C9)),
+    DARK_RUBY("dark_ruby", "🎬 Тёмная 3: Кинозал Рубин", "🎬 Dark 3: Cinema Ruby", true, Color(0xFF0F0F12), Color(0xFF1A1A22), Color(0xFF3B1520), Color(0xFFE11D48), Color.White, Color(0xFFF8FAFC), Color(0xFF94A3B8)),
+    DARK_OCEAN("dark_ocean", "🌊 Тёмная 4: Глубокий Океан", "🌊 Dark 4: Deep Ocean Sapphire", true, Color(0xFF0B132B), Color(0xFF1C2541), Color(0xFF1E3A5F), Color(0xFF38BDF8), Color.Black, Color(0xFFF0F9FF), Color(0xFF93C5FD)),
+    DARK_MOCHA("dark_mocha", "☕ Тёмная 5: Тёплый Мокко", "☕ Dark 5: Warm Espresso Bronze", true, Color(0xFF181311), Color(0xFF261E1B), Color(0xFF3D2B22), Color(0xFFFB923C), Color.Black, Color(0xFFFFF7ED), Color(0xFFD6BCFA)),
+    LIGHT_NORDIC("light_nordic", "☀️ Светлая 1: Скандинавское Утро", "☀️ Light 1: Nordic Ocean", false, Color(0xFFF1F5F9), Color(0xFFFFFFFF), Color(0xFFDBEAFE), Color(0xFF2563EB), Color.White, Color(0xFF0F172A), Color(0xFF64748B)),
+    LIGHT_LATTE("light_latte", "🌅 Светлая 2: Тёплый Латте", "🌅 Light 2: Warm Sand & Terracotta", false, Color(0xFFFAF6F0), Color(0xFFFFFFFF), Color(0xFFFFEDD5), Color(0xFFEA580C), Color.White, Color(0xFF292524), Color(0xFF78716C)),
+    LIGHT_MINT("light_mint", "🌿 Светлая 3: Мятный Сад", "🌿 Light 3: Mint & Forest", false, Color(0xFFECFDF5), Color(0xFFFFFFFF), Color(0xFFD1FAE5), Color(0xFF059669), Color.White, Color(0xFF064E3B), Color(0xFF047857)),
+    LIGHT_SAKURA("light_sakura", "🌸 Светлая 4: Сакура и Роза", "🌸 Light 4: Sakura Blossom", false, Color(0xFFFFF1F2), Color(0xFFFFFFFF), Color(0xFFFFE4E6), Color(0xFFDB2777), Color.White, Color(0xFF4C0519), Color(0xFF9F1239)),
+    LIGHT_LAVENDER("light_lavender", "💎 Светлая 5: Лавандовый Кварц", "💎 Light 5: Lavender Quartz", false, Color(0xFFF5F3FF), Color(0xFFFFFFFF), Color(0xFFEDE9FE), Color(0xFF7C3AED), Color.White, Color(0xFF2E1065), Color(0xFF6D28D9));
 
     companion object {
         fun fromId(id: String?): AppThemePalette = entries.find { it.id == id } ?: DARK_EMERALD
@@ -273,6 +169,7 @@ data class Strings(
     val loading: String,
     val reconnecting: String,
     val catAppearance: String,
+    val catPlayer: String,
     val catPlaylists: String,
     val catEpg: String,
     val catPortals: String,
@@ -305,6 +202,7 @@ val RuStrings = Strings(
     loading = "Загрузка данных...",
     reconnecting = "Поток прервался, переподключаемся...",
     catAppearance = "🎨 Вид, Темы и Язык (10 тем)",
+    catPlayer = "⚙️ Настройки видеоплеера",
     catPlaylists = "📺 Плейлисты (M3U / M3U8)",
     catEpg = "📅 Телепрограмма (EPG)",
     catPortals = "🎬 Порталы (VPortal и Stalker)",
@@ -337,6 +235,7 @@ val EnStrings = Strings(
     loading = "Loading data...",
     reconnecting = "Stream dropped, reconnecting...",
     catAppearance = "🎨 Theme & Language (10 Themes)",
+    catPlayer = "⚙️ Video Player Settings",
     catPlaylists = "📺 Playlists (M3U / M3U8)",
     catEpg = "📅 TV Guide (EPG)",
     catPortals = "🎬 Portals (VPortal & Stalker)",
@@ -354,12 +253,7 @@ val EnStrings = Strings(
     copyLogBtn = "📋 Copy VPortal Diagnostic Log"
 )
 
-fun loadNamedList(
-    prefs: SharedPreferences,
-    jsonKey: String,
-    legacySingleKey: String,
-    defaultName: String
-): List<NamedSource> {
+fun loadNamedList(prefs: SharedPreferences, jsonKey: String, legacySingleKey: String, defaultName: String): List<NamedSource> {
     val raw = prefs.getString(jsonKey, null)
     if (!raw.isNullOrBlank()) {
         val list = mutableListOf<NamedSource>()
@@ -380,9 +274,7 @@ fun saveNamedList(prefs: SharedPreferences, jsonKey: String, list: List<NamedSou
     val arr = JSONArray()
     list.forEach { item ->
         val o = JSONObject()
-        o.put("id", item.id)
-        o.put("name", item.name)
-        o.put("url", item.url)
+        o.put("id", item.id); o.put("name", item.name); o.put("url", item.url)
         arr.put(o)
     }
     prefs.edit().putString(jsonKey, arr.toString()).apply()
@@ -401,6 +293,9 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     root.put("vportal_url", prefs.getString("vportal_url", ""))
     root.put("stalker_url", prefs.getString("stalker_url", ""))
     root.put("stalker_mac", prefs.getString("stalker_mac", ""))
+    root.put("player_resize", prefs.getInt("player_resize", 0))
+    root.put("player_buffer", prefs.getInt("player_buffer", 1))
+    root.put("player_ua", prefs.getString("player_ua", "Lavf/60.3.100"))
     val favArr = JSONArray()
     prefs.getStringSet("favs", emptySet())?.forEach { favArr.put(it) }
     root.put("favs", favArr)
@@ -412,9 +307,7 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
     val favSet = mutableSetOf<String>()
     val favArr = root.optJSONArray("favs")
     if (favArr != null) {
-        for (i in 0 until favArr.length()) {
-            favSet.add(favArr.getString(i))
-        }
+        for (i in 0 until favArr.length()) favSet.add(favArr.getString(i))
     }
     prefs.edit()
         .putBoolean("lang_selected", true)
@@ -428,6 +321,9 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
         .putString("vportal_url", root.optString("vportal_url", ""))
         .putString("stalker_url", root.optString("stalker_url", ""))
         .putString("stalker_mac", root.optString("stalker_mac", ""))
+        .putInt("player_resize", root.optInt("player_resize", 0))
+        .putInt("player_buffer", root.optInt("player_buffer", 1))
+        .putString("player_ua", root.optString("player_ua", "Lavf/60.3.100"))
         .putStringSet("favs", favSet)
         .apply()
     true
