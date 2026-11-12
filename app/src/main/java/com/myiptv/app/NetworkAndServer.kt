@@ -1,6 +1,8 @@
 package com.myiptv.app
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.net.Uri
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.Dispatchers
@@ -14,6 +16,9 @@ import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.BufferedReader
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.PrintWriter
@@ -67,69 +72,88 @@ object NetworkLoader {
         return low.endsWith(".jpg") || low.endsWith(".jpeg") || low.endsWith(".png") || low.endsWith(".webp") || low.endsWith(".gif")
     }
 
-    suspend fun loadM3u(url: String): M3uParseResult = withContext(Dispatchers.IO) {
+    suspend fun loadM3u(url: String, context: Context? = null, forceRefresh: Boolean = false): M3uParseResult = withContext(Dispatchers.IO) {
         val channels = mutableListOf<Channel>()
         val movies = mutableListOf<VodMovie>()
         var embeddedEpgUrl: String? = null
 
         runCatching {
-            val cleanUrl = urlExtractRegex.find(url)?.groupValues?.get(1) ?: url.trim()
-            val req = Request.Builder().url(cleanUrl).header("User-Agent", "Mozilla/5.0").build()
-            client.newCall(req).execute().use { resp ->
-                val stream = resp.body?.byteStream() ?: return@use
-                val reader = BufferedReader(InputStreamReader(stream, Charsets.UTF_8))
-                var line: String?
-                var name = ""
-                var group = "Общие"
-                var logo: String? = null
-                var epgId: String? = null
-                var ua: String? = null
-                var catchupDays = 0
-                var catchupSource: String? = null
-                var num = 1
+            val rawStream: InputStream? = if (url.startsWith("content://") && context != null) {
+                context.contentResolver.openInputStream(Uri.parse(url))
+            } else {
+                val cleanUrl = urlExtractRegex.find(url)?.groupValues?.get(1) ?: url.trim()
+                val cacheFile = context?.let { File(it.cacheDir, "m3u_${cleanUrl.hashCode()}.txt") }
+                val cacheFresh = cacheFile != null && cacheFile.exists() && !forceRefresh &&
+                    (System.currentTimeMillis() - cacheFile.lastModified()) < 2L * 3600L * 1000L
 
-                while (reader.readLine().also { line = it } != null) {
-                    val t = line!!.trim()
-                    if (t.isEmpty()) continue
-                    when {
-                        t.startsWith("#EXTM3U", ignoreCase = true) -> {
-                            val attrs = attrRegex.findAll(t).associate { it.groupValues[1].lowercase() to it.groupValues[2] }
-                            embeddedEpgUrl = attrs["url-tvg"]?.takeIf { it.isNotBlank() }
-                                ?: attrs["x-tvg-url"]?.takeIf { it.isNotBlank() }
-                                ?: attrs["tvg-url"]?.takeIf { it.isNotBlank() }
-                        }
-                        t.startsWith("#EXTINF:") -> {
-                            name = t.substringAfterLast(",").trim()
-                            val attrs = attrRegex.findAll(t).associate { it.groupValues[1].lowercase() to it.groupValues[2] }
-                            logo = attrs["tvg-logo"]?.takeIf { it.isNotBlank() }
-                            epgId = attrs["tvg-id"]?.takeIf { it.isNotBlank() }
-                                ?: attrs["tvg-name"]?.takeIf { it.isNotBlank() }
-                            group = attrs["group-title"]?.takeIf { it.isNotBlank() } ?: group
-                            catchupSource = attrs["catchup-source"]?.takeIf { it.isNotBlank() }
+                if (cacheFresh) {
+                    FileInputStream(cacheFile)
+                } else {
+                    val req = Request.Builder().url(cleanUrl).header("User-Agent", "Mozilla/5.0").build()
+                    val resp = client.newCall(req).execute()
+                    if (resp.isSuccessful && resp.body != null) {
+                        val bytes = resp.body!!.bytes()
+                        resp.close()
+                        if (cacheFile != null) runCatching { FileOutputStream(cacheFile).use { it.write(bytes) } }
+                        bytes.inputStream()
+                    } else {
+                        resp.close()
+                        if (cacheFile != null && cacheFile.exists()) FileInputStream(cacheFile) else null
+                    }
+                }
+            }
 
-                            val explicitDays = attrs["catchup-days"]?.toIntOrNull()
-                                ?: attrs["tvg-rec"]?.toIntOrNull()
-                                ?: attrs["timeshift"]?.toIntOrNull()
-                            val hasCatchupTag = !attrs["catchup"].isNullOrBlank() || !catchupSource.isNullOrBlank()
-                            catchupDays = when {
-                                explicitDays != null && explicitDays > 0 -> explicitDays
-                                hasCatchupTag -> 5
-                                else -> 0
+            if (rawStream != null) {
+                rawStream.use { stream ->
+                    val reader = BufferedReader(InputStreamReader(stream, Charsets.UTF_8))
+                    var line: String?
+                    var name = ""
+                    var group = "Общие"
+                    var logo: String? = null
+                    var epgId: String? = null
+                    var ua: String? = null
+                    var catchupDays = 0
+                    var catchupSource: String? = null
+                    var num = 1
+
+                    while (reader.readLine().also { line = it } != null) {
+                        val t = line!!.trim()
+                        if (t.isEmpty()) continue
+                        when {
+                            t.startsWith("#EXTM3U", ignoreCase = true) -> {
+                                val attrs = attrRegex.findAll(t).associate { it.groupValues[1].lowercase() to it.groupValues[2] }
+                                embeddedEpgUrl = attrs["url-tvg"]?.takeIf { it.isNotBlank() }
+                                    ?: attrs["x-tvg-url"]?.takeIf { it.isNotBlank() }
+                                    ?: attrs["tvg-url"]?.takeIf { it.isNotBlank() }
                             }
-                        }
-                        t.startsWith("#EXTGRP:") -> group = t.substringAfter("#EXTGRP:").trim()
-                        t.startsWith("#EXTVLCOPT:http-user-agent=") -> ua = t.substringAfter("=").trim()
-                        !t.startsWith("#") -> {
-                            if (name.isNotEmpty()) {
-                                val isVod = t.endsWith(".mp4", true) || t.endsWith(".mkv", true) || t.endsWith(".avi", true)
-                                if (isVod) {
-                                    movies.add(VodMovie("m3u_vod_$num", name, group, logo, "", "", "", t))
-                                } else {
-                                    val finalCatchup = if (catchupDays > 0) catchupDays else if (t.contains("/iptv/")) 5 else 0
-                                    channels.add(Channel("ch_$num", num, name, group, logo, t, epgId, ua, finalCatchup, catchupSource))
+                            t.startsWith("#EXTINF:") -> {
+                                name = t.substringAfterLast(",").trim()
+                                val attrs = attrRegex.findAll(t).associate { it.groupValues[1].lowercase() to it.groupValues[2] }
+                                logo = attrs["tvg-logo"]?.takeIf { it.isNotBlank() }
+                                epgId = attrs["tvg-id"]?.takeIf { it.isNotBlank() } ?: attrs["tvg-name"]?.takeIf { it.isNotBlank() }
+                                group = attrs["group-title"]?.takeIf { it.isNotBlank() } ?: group
+                                catchupSource = attrs["catchup-source"]?.takeIf { it.isNotBlank() }
+                                val explicitDays = attrs["catchup-days"]?.toIntOrNull() ?: attrs["tvg-rec"]?.toIntOrNull() ?: attrs["timeshift"]?.toIntOrNull()
+                                val hasCatchupTag = !attrs["catchup"].isNullOrBlank() || !catchupSource.isNullOrBlank()
+                                catchupDays = when {
+                                    explicitDays != null && explicitDays > 0 -> explicitDays
+                                    hasCatchupTag -> 5
+                                    else -> 0
                                 }
-                                num++
-                                name = ""; logo = null; epgId = null; ua = null; catchupDays = 0; catchupSource = null
+                            }
+                            t.startsWith("#EXTGRP:") -> group = t.substringAfter("#EXTGRP:").trim()
+                            t.startsWith("#EXTVLCOPT:http-user-agent=") -> ua = t.substringAfter("=").trim()
+                            !t.startsWith("#") -> {
+                                if (name.isNotEmpty()) {
+                                    val isVod = t.endsWith(".mp4", true) || t.endsWith(".mkv", true) || t.endsWith(".avi", true)
+                                    if (isVod) {
+                                        movies.add(VodMovie("m3u_vod_$num", name, group, logo, "", "", "", t))
+                                    } else {
+                                        val finalCatchup = if (catchupDays > 0) catchupDays else if (t.contains("/iptv/")) 5 else 0
+                                        channels.add(Channel("ch_$num", num, name, group, logo, t, epgId, ua, finalCatchup, catchupSource))
+                                    }
+                                    num++; name = ""; logo = null; epgId = null; ua = null; catchupDays = 0; catchupSource = null
+                                }
                             }
                         }
                     }
@@ -147,228 +171,216 @@ object NetworkLoader {
     ): Pair<List<VodMovie>, String> = withContext(Dispatchers.IO) {
         val itemsOut = mutableListOf<VodMovie>()
         var diagnostic = ""
-
         runCatching {
             val (key, baseUrl) = parseVPortalCredentials(rawPortalUrl)
             val targetUrl = if (!customTargetUrl.isNullOrBlank() && customTargetUrl.contains("/api/")) customTargetUrl else baseUrl
-
             if (!targetUrl.startsWith("http")) {
-                return@withContext emptyList<VodMovie>() to "⚠️ Очистите поле VPortal крестиком и вставьте ссылку portal::[key:...]http://..."
+                return@withContext emptyList<VodMovie>() to "⚠️ Очистите поле VPortal и вставьте ссылку portal::[key:...]http://..."
             }
-
-            val reqObj = if (!customRequestJson.isNullOrBlank()) {
-                runCatching { JSONObject(customRequestJson) }.getOrElse { JSONObject() }
-            } else JSONObject()
-
+            val reqObj = if (!customRequestJson.isNullOrBlank()) runCatching { JSONObject(customRequestJson) }.getOrElse { JSONObject() } else JSONObject()
             if (key.isNotEmpty() && !reqObj.has("key")) reqObj.put("key", key)
             if (reqObj.has("limit") && reqObj.optInt("limit", 0) <= 0) reqObj.put("limit", PAGE_SIZE)
-
             if (!searchQuery.isNullOrBlank()) {
                 if (!reqObj.has("cmd")) reqObj.put("cmd", "flicks")
-                reqObj.put("search", searchQuery)
-                reqObj.put("query", searchQuery)
-                reqObj.put("offset", 0)
-                reqObj.put("limit", PAGE_SIZE)
+                reqObj.put("search", searchQuery); reqObj.put("query", searchQuery); reqObj.put("offset", 0); reqObj.put("limit", PAGE_SIZE)
             }
-
             val payloadStr = reqObj.toString()
-            val request = Request.Builder()
-                .url(targetUrl)
-                .header("User-Agent", OTT_UA)
-                .header("Accept", "application/json")
-                .post(payloadStr.toRequestBody("application/json; charset=utf-8".toMediaType()))
-                .build()
+            val request = Request.Builder().url(targetUrl).header("User-Agent", OTT_UA).header("Accept", "application/json")
+                .post(payloadStr.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
 
             client.newCall(request).execute().use { resp ->
                 val body = resp.body?.string()?.trim() ?: ""
                 if (resp.isSuccessful && body.isNotEmpty()) {
                     parseVideoportalJson(body, baseUrl, reqObj, itemsOut)
                     diagnostic = "✅ HTTP ${resp.code} (элементов: ${itemsOut.size}) | Sent: $payloadStr | Resp: " + body.take(400).replace("\n", " ")
-                } else {
-                    diagnostic = "❌ HTTP ${resp.code} | Sent: $payloadStr | Resp: " + body.take(350)
-                }
+                } else diagnostic = "❌ HTTP ${resp.code} | Sent: $payloadStr | Resp: " + body.take(350)
             }
-        }.onFailure { err ->
-            diagnostic = "❌ Ошибка VPortal: ${err.localizedMessage}"
-        }
+        }.onFailure { diagnostic = "❌ Ошибка VPortal: ${it.localizedMessage}" }
         itemsOut to diagnostic
     }
 
     private fun extractStreamUrl(obj: JSONObject, baseUrl: String): String {
-        val fields = listOf("stream_url", "video_url", "file", "stream", "src", "link", "hls", "play_url", "video", "url", "cmd")
-        for (f in fields) {
+        for (f in listOf("stream_url", "video_url", "file", "stream", "src", "link", "hls", "play_url", "video", "url", "cmd")) {
             val v = obj.optString(f, "").replace("\\/", "/").trim()
             if (v.startsWith("http") && !isPortalOrImageUrl(v, baseUrl)) return v
         }
         return ""
     }
 
-    private fun parseVideoportalJson(
-        body: String,
-        baseUrl: String,
-        sentRequest: JSONObject,
-        out: MutableList<VodMovie>
-    ) {
+    private fun parseVideoportalJson(body: String, baseUrl: String, sentRequest: JSONObject, out: MutableList<VodMovie>) {
         val cleanBody = body.replace("\\/", "/")
         if (cleanBody.startsWith("http") && !isPortalOrImageUrl(cleanBody, baseUrl)) {
             out.add(VodMovie("vp_raw_1", "▶ Воспроизвести", "Видео", null, "", "", "", cleanBody.lines().first().trim(), isFolder = false))
             return
         }
-
         runCatching {
             val rootObj = if (cleanBody.startsWith("{")) JSONObject(cleanBody) else null
             val rootUrl = rootObj?.optString("url")?.takeIf { it.startsWith("http") && it.contains("/api/") } ?: baseUrl
             val rootReq = rootObj?.optJSONObject("request") ?: sentRequest
-
             if (rootObj != null) {
                 val rootStream = extractStreamUrl(rootObj, baseUrl)
                 if (rootStream.isNotEmpty()) {
                     out.add(VodMovie("vp_direct_root", rootObj.optString("title", rootObj.optString("name", "▶ Смотреть")), "Видео", rootObj.optString("poster"), rootObj.optString("description", ""), rootObj.optString("year", ""), rootObj.optString("rating", ""), rootStream, false))
                 }
             }
-
             val arr = when {
                 cleanBody.startsWith("[") -> JSONArray(cleanBody)
-                rootObj != null -> rootObj.optJSONArray("items")
-                    ?: rootObj.optJSONArray("data")
-                    ?: rootObj.optJSONArray("movies")
-                    ?: rootObj.optJSONArray("playlist")
-                    ?: rootObj.optJSONArray("streams")
-                    ?: rootObj.optJSONArray("files")
-                    ?: JSONArray()
+                rootObj != null -> rootObj.optJSONArray("items") ?: rootObj.optJSONArray("data") ?: rootObj.optJSONArray("movies") ?: rootObj.optJSONArray("playlist") ?: rootObj.optJSONArray("streams") ?: rootObj.optJSONArray("files") ?: JSONArray()
                 else -> JSONArray()
             }
-
             for (i in 0 until arr.length()) {
                 val item = arr.optJSONObject(i) ?: continue
                 val itemType = item.optString("type", "").lowercase()
                 if (itemType == "search" || itemType == "input") continue
-
                 val title = item.optString("title").ifEmpty { item.optString("name") }.ifEmpty { item.optString("label") }.ifEmpty { "Серия #${i + 1}" }
                 val poster = item.optString("poster").ifEmpty { item.optString("logo") }.ifEmpty { item.optString("icon") }.ifEmpty { item.optString("cover") }.ifEmpty { item.optString("img") }.ifEmpty { item.optString("pic") }
                 val desc = item.optString("description").ifEmpty { item.optString("plot") }
                 val year = item.optString("year", "")
                 val rating = item.optString("rating", item.optString("rating_kp", ""))
-
                 val childReqObj = item.optJSONObject("request")
-                val directStream = extractStreamUrl(item, baseUrl).ifEmpty {
-                    if (childReqObj != null) extractStreamUrl(childReqObj, baseUrl) else ""
-                }
-
+                val directStream = extractStreamUrl(item, baseUrl).ifEmpty { if (childReqObj != null) extractStreamUrl(childReqObj, baseUrl) else "" }
                 val mergedReq = JSONObject()
                 val parentKey = rootReq.optString("key").ifEmpty { sentRequest.optString("key") }
                 if (parentKey.isNotEmpty()) mergedReq.put("key", parentKey)
-
                 if (childReqObj != null) {
                     val keys = childReqObj.keys()
-                    while (keys.hasNext()) {
-                        val k = keys.next()
-                        mergedReq.put(k, childReqObj.get(k))
-                    }
+                    while (keys.hasNext()) { val k = keys.next(); mergedReq.put(k, childReqObj.get(k)) }
                     if (mergedReq.has("limit") && mergedReq.optInt("limit", 0) <= 0) mergedReq.put("limit", PAGE_SIZE)
                 } else {
                     for (f in listOf("id", "fid", "sid", "eid", "category_id", "cat_id", "category", "cat", "cmd", "action", "page", "season", "episode")) {
                         if (item.has(f)) mergedReq.put(f, item.get(f))
                     }
                 }
-
-                if (directStream.isNotEmpty()) {
-                    out.add(VodMovie("vp_media_${i}_${System.nanoTime()}", title, "Видео", poster.ifEmpty { null }, desc, year, rating, directStream, false, mergedReq.toString(), rootUrl))
-                } else {
-                    out.add(VodMovie("vp_node_${i}_${System.nanoTime()}", title, if (itemType == "category") "Категория" else "Папка / Серия", poster.ifEmpty { null }, desc, year, rating, "", true, mergedReq.toString(), rootUrl))
-                }
+                if (directStream.isNotEmpty()) out.add(VodMovie("vp_media_${i}_${System.nanoTime()}", title, "Видео", poster.ifEmpty { null }, desc, year, rating, directStream, false, mergedReq.toString(), rootUrl))
+                else out.add(VodMovie("vp_node_${i}_${System.nanoTime()}", title, if (itemType == "category") "Категория" else "Папка / Серия", poster.ifEmpty { null }, desc, year, rating, "", true, mergedReq.toString(), rootUrl))
             }
-
             if (out.isEmpty()) {
                 val mediaUrls = urlExtractRegex.findAll(cleanBody).map { it.groupValues[1] }.filter { !isPortalOrImageUrl(it, baseUrl) }.distinct().toList()
-                mediaUrls.forEachIndexed { idx, sUrl ->
-                    out.add(VodMovie("vp_auto_$idx", if (mediaUrls.size == 1) "▶ Воспроизвести" else "▶ Поток #${idx + 1}", "Видео", null, "", "", "", sUrl, false))
-                }
+                mediaUrls.forEachIndexed { idx, sUrl -> out.add(VodMovie("vp_auto_$idx", if (mediaUrls.size == 1) "▶ Воспроизвести" else "▶ Поток #${idx + 1}", "Видео", null, "", "", "", sUrl, false)) }
             }
-
             if (sentRequest.has("limit") && arr.length() >= 20) {
                 val nextReq = JSONObject(sentRequest.toString())
-                val curOffset = nextReq.optInt("offset", 0)
-                val curLimit = nextReq.optInt("limit", PAGE_SIZE).coerceAtLeast(20)
-                nextReq.put("offset", curOffset + curLimit)
-                nextReq.put("limit", curLimit)
+                val curOffset = nextReq.optInt("offset", 0); val curLimit = nextReq.optInt("limit", PAGE_SIZE).coerceAtLeast(20)
+                nextReq.put("offset", curOffset + curLimit); nextReq.put("limit", curLimit)
                 out.add(VodMovie("vp_next_${curOffset + curLimit}", "➡️ Ещё +$curLimit", "Навигация", null, "", "", "", "", true, nextReq.toString(), rootUrl))
             }
         }
     }
 
-    suspend fun loadStalker(portalUrl: String, mac: String): List<Channel> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<Channel>()
+    private fun normalizeStalkerBase(portalUrl: String): String {
+        var base = portalUrl.trim()
+        if (base.endsWith("/c/")) base = base.removeSuffix("c/")
+        if (!base.endsWith("/")) base += "/"
+        return base
+    }
+
+    private fun stalkerHandshake(base: String, cookie: String): String {
+        val hsReq = Request.Builder().url("${base}portal.php?type=stb&action=handshake&JsHttpRequest=1-xml")
+            .header("Cookie", cookie).header("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200 stbapp").build()
+        return client.newCall(hsReq).execute().use { r ->
+            JSONObject(r.body?.string() ?: "{}").optJSONObject("js")?.optString("token") ?: ""
+        }
+    }
+
+    // Загрузка телеканалов + VOD фильмов со Stalker Portal (и поддержка create_link!)
+    suspend fun loadStalkerFull(portalUrl: String, mac: String): Pair<List<Channel>, List<VodMovie>> = withContext(Dispatchers.IO) {
+        val channels = mutableListOf<Channel>()
+        val movies = mutableListOf<VodMovie>()
         runCatching {
-            var base = portalUrl.trim()
-            if (base.endsWith("/c/")) base = base.removeSuffix("c/")
-            if (!base.endsWith("/")) base += "/"
+            val base = normalizeStalkerBase(portalUrl)
             val cookie = "mac=${java.net.URLEncoder.encode(mac, "UTF-8")}; stb_lang=ru; timezone=Europe/Moscow"
-
-            val hsReq = Request.Builder()
-                .url("${base}portal.php?type=stb&action=handshake&JsHttpRequest=1-xml")
-                .header("Cookie", cookie)
-                .header("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200 stbapp")
-                .build()
-
-            var token = ""
-            client.newCall(hsReq).execute().use { r ->
-                token = JSONObject(r.body?.string() ?: "{}").optJSONObject("js")?.optString("token") ?: ""
-            }
-
+            val token = stalkerHandshake(base, cookie)
             if (token.isNotEmpty()) {
-                val chReq = Request.Builder()
-                    .url("${base}portal.php?type=itv&action=get_all_channels&JsHttpRequest=1-xml")
-                    .header("Cookie", cookie)
-                    .header("Authorization", "Bearer $token")
-                    .header("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200 stbapp")
-                    .build()
-
+                val chReq = Request.Builder().url("${base}portal.php?type=itv&action=get_all_channels&JsHttpRequest=1-xml")
+                    .header("Cookie", cookie).header("Authorization", "Bearer $token").header("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200 stbapp").build()
                 client.newCall(chReq).execute().use { r ->
                     val data = JSONObject(r.body?.string() ?: "{}").optJSONObject("js")?.optJSONArray("data") ?: JSONArray()
                     for (i in 0 until data.length()) {
                         val item = data.getJSONObject(i)
-                        val rawCmd = item.optString("cmd").removePrefix("ffrt ").removePrefix("ffmpeg ").trim()
+                        val rawCmd = item.optString("cmd").trim()
                         if (rawCmd.isNotEmpty()) {
-                            list.add(Channel("stk_$i", i + 1, item.optString("name", "CH ${i + 1}"), "Stalker TV", item.optString("logo"), rawCmd, item.optString("xmltv_id")))
+                            // Сохраняем команду с префиксом, чтобы перед запуском сделать create_link (если ссылка временная)
+                            val encoded = "stalker_cmd:::${base}|||${mac}|||${rawCmd}"
+                            channels.add(Channel("stk_$i", i + 1, item.optString("name", "CH ${i + 1}"), "Stalker TV", item.optString("logo"), encoded, item.optString("xmltv_id")))
+                        }
+                    }
+                }
+
+                // Пробуем подтянуть VOD-фильмы со Stalker Portal
+                val vodReq = Request.Builder().url("${base}portal.php?type=vod&action=get_ordered_list&p=1&JsHttpRequest=1-xml")
+                    .header("Cookie", cookie).header("Authorization", "Bearer $token").header("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200 stbapp").build()
+                runCatching {
+                    client.newCall(vodReq).execute().use { r ->
+                        val data = JSONObject(r.body?.string() ?: "{}").optJSONObject("js")?.optJSONArray("data") ?: JSONArray()
+                        for (i in 0 until data.length()) {
+                            val item = data.getJSONObject(i)
+                            val cmd = item.optString("cmd").trim()
+                            if (cmd.isNotEmpty()) {
+                                val poster = item.optString("screenshot_uri").let { if (it.startsWith("/")) base.trimEnd('/') + it else it }
+                                movies.add(VodMovie("stk_vod_$i", item.optString("name", "Фильм"), "Stalker VOD", poster.ifEmpty { null }, item.optString("description"), item.optString("year"), item.optString("rating_imdb"), "stalker_vod:::${base}|||${mac}|||${cmd}"))
+                            }
                         }
                     }
                 }
             }
         }
-        list
+        channels to movies
+    }
+
+    // Генерация реальной временной ссылки create_link перед включением Stalker-канала или фильма
+    suspend fun resolveStalkerStreamIfNeeded(rawUrl: String): String = withContext(Dispatchers.IO) {
+        if (!rawUrl.startsWith("stalker_cmd:::") && !rawUrl.startsWith("stalker_vod:::")) return@withContext rawUrl
+        val isVod = rawUrl.startsWith("stalker_vod:::")
+        val payload = rawUrl.removePrefix("stalker_cmd:::").removePrefix("stalker_vod:::")
+        val parts = payload.split("|||")
+        if (parts.size < 3) return@withContext rawUrl
+        val base = parts[0]; val mac = parts[1]; val rawCmd = parts[2]
+        val directFallback = rawCmd.removePrefix("ffrt ").removePrefix("ffmpeg ").trim()
+
+        runCatching {
+            val cookie = "mac=${java.net.URLEncoder.encode(mac, "UTF-8")}; stb_lang=ru; timezone=Europe/Moscow"
+            val token = stalkerHandshake(base, cookie)
+            if (token.isNotEmpty()) {
+                val typeParam = if (isVod) "vod" else "itv"
+                val linkReq = Request.Builder()
+                    .url("${base}portal.php?type=$typeParam&action=create_link&cmd=${java.net.URLEncoder.encode(rawCmd, "UTF-8")}&JsHttpRequest=1-xml")
+                    .header("Cookie", cookie).header("Authorization", "Bearer $token").header("User-Agent", "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200 stbapp").build()
+                client.newCall(linkReq).execute().use { r ->
+                    val resolvedCmd = JSONObject(r.body?.string() ?: "{}").optJSONObject("js")?.optString("cmd", "") ?: ""
+                    val clean = resolvedCmd.removePrefix("ffrt ").removePrefix("ffmpeg ").trim()
+                    if (clean.startsWith("http")) return@withContext clean
+                }
+            }
+        }
+        directFallback
     }
 
     private fun parseXmlDateFast(raw: String?): Long {
         if (raw.isNullOrBlank() || raw.length < 14) return 0L
         return runCatching {
-            val year = raw.substring(0, 4).toInt()
-            val month = raw.substring(4, 6).toInt() - 1
-            val day = raw.substring(6, 8).toInt()
-            val hour = raw.substring(8, 10).toInt()
-            val min = raw.substring(10, 12).toInt()
-            val sec = raw.substring(12, 14).toInt()
-
             val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
-            cal.set(year, month, day, hour, min, sec)
+            cal.set(raw.substring(0, 4).toInt(), raw.substring(4, 6).toInt() - 1, raw.substring(6, 8).toInt(), raw.substring(8, 10).toInt(), raw.substring(10, 12).toInt(), raw.substring(12, 14).toInt())
             cal.set(Calendar.MILLISECOND, 0)
             var utcMs = cal.timeInMillis
-
             val tzPart = raw.substring(14).trim()
             if (tzPart.length >= 5 && (tzPart[0] == '+' || tzPart[0] == '-')) {
                 val sign = if (tzPart[0] == '+') 1 else -1
                 val cleanTz = tzPart.substring(1).replace(":", "")
-                val tzH = cleanTz.substring(0, 2).toIntOrNull() ?: 0
-                val tzM = cleanTz.substring(2, 4).toIntOrNull() ?: 0
-                val offsetMs = sign * ((tzH * 3600L + tzM * 60L) * 1000L)
+                val offsetMs = sign * (((cleanTz.substring(0, 2).toIntOrNull() ?: 0) * 3600L + (cleanTz.substring(2, 4).toIntOrNull() ?: 0) * 60L) * 1000L)
                 utcMs -= offsetMs
             }
             utcMs
         }.getOrDefault(0L)
     }
 
-    // Загрузка телепрограммы с учетом выбранной глубины архива (1, 3 или 5 дней назад)
-    suspend fun loadFullEpgSchedule(epgUrl: String, archiveDays: Int = 3): Map<String, List<EpgProgramItem>> = withContext(Dispatchers.IO) {
+    // Загрузка EPG с локальным кэшем на 6 часов и сдвигом времени (-12..+12ч)
+    suspend fun loadFullEpgSchedule(
+        epgUrl: String,
+        archiveDays: Int = 3,
+        epgOffsetHours: Int = 0,
+        context: Context? = null,
+        forceRefresh: Boolean = false
+    ): Map<String, List<EpgProgramItem>> = withContext(Dispatchers.IO) {
         val rawById = mutableMapOf<String, MutableList<EpgProgramItem>>()
         val aliasToId = mutableMapOf<String, String>()
         val nowMs = System.currentTimeMillis()
@@ -376,72 +388,84 @@ object NetworkLoader {
         val windowStart = nowMs - (daysBack * 24L * 3600L * 1000L)
         val windowEnd = nowMs + (12L * 3600L * 1000L)
         val maxItemsPerChannel = (daysBack.toInt() * 65) + 40
+        val offsetMs = epgOffsetHours * 3600L * 1000L
         val timeFmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
         val shortTimeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
 
         runCatching {
-            val req = Request.Builder().url(epgUrl).header("User-Agent", "Mozilla/5.0").build()
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@use
-                val rawStream = resp.body?.byteStream() ?: return@use
+            val cacheFile = context?.let { File(it.cacheDir, "epg_${epgUrl.hashCode()}.bin") }
+            val cacheFresh = cacheFile != null && cacheFile.exists() && !forceRefresh &&
+                (nowMs - cacheFile.lastModified()) < 6L * 3600L * 1000L
+
+            val rawStream: InputStream? = if (cacheFresh) {
+                FileInputStream(cacheFile)
+            } else {
+                val req = Request.Builder().url(epgUrl).header("User-Agent", "Mozilla/5.0").build()
+                val resp = client.newCall(req).execute()
+                if (resp.isSuccessful && resp.body != null) {
+                    if (cacheFile != null) {
+                        resp.body!!.byteStream().use { input ->
+                            FileOutputStream(cacheFile).use { out -> input.copyTo(out) }
+                        }
+                        resp.close()
+                        FileInputStream(cacheFile)
+                    } else {
+                        resp.body!!.byteStream()
+                    }
+                } else {
+                    resp.close()
+                    if (cacheFile != null && cacheFile.exists()) FileInputStream(cacheFile) else null
+                }
+            }
+
+            if (rawStream != null) {
                 val inputStream: InputStream = if (epgUrl.lowercase().contains(".gz")) GZIPInputStream(rawStream) else rawStream
-                val parser = XmlPullParserFactory.newInstance().newPullParser()
-                parser.setInput(inputStream, "UTF-8")
+                inputStream.use { stream ->
+                    val parser = XmlPullParserFactory.newInstance().newPullParser()
+                    parser.setInput(stream, "UTF-8")
+                    var eventType = parser.eventType
+                    var curChannelTagId: String? = null; var insideDisplayName = false
+                    var progChannelId: String? = null; var progStart = 0L; var progStop = 0L
+                    var isProgInWindow = false; var insideTitle = false
 
-                var eventType = parser.eventType
-                var curChannelTagId: String? = null
-                var insideDisplayName = false
-
-                var progChannelId: String? = null
-                var progStart = 0L
-                var progStop = 0L
-                var isProgInWindow = false
-                var insideTitle = false
-
-                while (eventType != XmlPullParser.END_DOCUMENT) {
-                    when (eventType) {
-                        XmlPullParser.START_TAG -> {
-                            when (parser.name) {
+                    while (eventType != XmlPullParser.END_DOCUMENT) {
+                        when (eventType) {
+                            XmlPullParser.START_TAG -> when (parser.name) {
                                 "channel" -> curChannelTagId = parser.getAttributeValue(null, "id")
                                 "display-name" -> if (curChannelTagId != null) insideDisplayName = true
                                 "programme" -> {
                                     progChannelId = parser.getAttributeValue(null, "channel")
-                                    progStart = parseXmlDateFast(parser.getAttributeValue(null, "start"))
-                                    progStop = parseXmlDateFast(parser.getAttributeValue(null, "stop"))
+                                    progStart = parseXmlDateFast(parser.getAttributeValue(null, "start")) + offsetMs
+                                    progStop = parseXmlDateFast(parser.getAttributeValue(null, "stop")) + offsetMs
                                     isProgInWindow = progStop >= windowStart && progStart <= windowEnd
                                 }
-                                "title" -> if (progChannelId != null && isProgInWindow) {
-                                    insideTitle = true
+                                "title" -> if (progChannelId != null && isProgInWindow) insideTitle = true
+                            }
+                            XmlPullParser.TEXT -> {
+                                if (insideDisplayName && curChannelTagId != null) {
+                                    val rawName = parser.text.trim()
+                                    if (rawName.isNotEmpty()) {
+                                        aliasToId[rawName.lowercase()] = curChannelTagId!!
+                                        val norm = normalizeChannelKey(rawName)
+                                        if (norm.isNotEmpty()) aliasToId[norm] = curChannelTagId!!
+                                    }
+                                    insideDisplayName = false
+                                } else if (insideTitle && progChannelId != null && isProgInWindow) {
+                                    val title = parser.text.trim()
+                                    val list = rawById.getOrPut(progChannelId!!) { mutableListOf() }
+                                    if (list.size < maxItemsPerChannel) {
+                                        list.add(EpgProgramItem(title, progStart, progStop, "${timeFmt.format(Date(progStart))} - ${shortTimeFmt.format(Date(progStop))}"))
+                                    }
+                                    insideTitle = false
                                 }
                             }
-                        }
-                        XmlPullParser.TEXT -> {
-                            if (insideDisplayName && curChannelTagId != null) {
-                                val rawName = parser.text.trim()
-                                if (rawName.isNotEmpty()) {
-                                    aliasToId[rawName.lowercase()] = curChannelTagId!!
-                                    val norm = normalizeChannelKey(rawName)
-                                    if (norm.isNotEmpty()) aliasToId[norm] = curChannelTagId!!
-                                }
-                                insideDisplayName = false
-                            } else if (insideTitle && progChannelId != null && isProgInWindow) {
-                                val title = parser.text.trim()
-                                val list = rawById.getOrPut(progChannelId!!) { mutableListOf() }
-                                if (list.size < maxItemsPerChannel) {
-                                    val tLabel = "${timeFmt.format(Date(progStart))} - ${shortTimeFmt.format(Date(progStop))}"
-                                    list.add(EpgProgramItem(title, progStart, progStop, tLabel))
-                                }
-                                insideTitle = false
-                            }
-                        }
-                        XmlPullParser.END_TAG -> {
-                            when (parser.name) {
+                            XmlPullParser.END_TAG -> when (parser.name) {
                                 "channel" -> { curChannelTagId = null; insideDisplayName = false }
                                 "programme" -> { progChannelId = null; isProgInWindow = false; insideTitle = false }
                             }
                         }
+                        eventType = parser.next()
                     }
-                    eventType = parser.next()
                 }
             }
         }
@@ -449,16 +473,10 @@ object NetworkLoader {
         val finalMap = mutableMapOf<String, List<EpgProgramItem>>()
         rawById.forEach { (id, list) ->
             val sorted = list.sortedBy { it.startMs }
-            finalMap[id] = sorted
-            finalMap[id.lowercase()] = sorted
-            val normId = normalizeChannelKey(id)
-            if (normId.isNotEmpty()) finalMap[normId] = sorted
+            finalMap[id] = sorted; finalMap[id.lowercase()] = sorted
+            val normId = normalizeChannelKey(id); if (normId.isNotEmpty()) finalMap[normId] = sorted
         }
-        aliasToId.forEach { (aliasKey, id) ->
-            rawById[id]?.let { list ->
-                finalMap[aliasKey] = list.sortedBy { it.startMs }
-            }
-        }
+        aliasToId.forEach { (aliasKey, id) -> rawById[id]?.let { finalMap[aliasKey] = it.sortedBy { p -> p.startMs } } }
         finalMap
     }
 }
@@ -477,22 +495,13 @@ fun getDeviceLocalIp(): String {
 fun generateQrBitmap(content: String, size: Int): Bitmap? = runCatching {
     val matrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, size, size)
     val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
-    for (x in 0 until size) {
-        for (y in 0 until size) {
-            bmp.setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
-        }
-    }
+    for (x in 0 until size) for (y in 0 until size) bmp.setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
     bmp
 }.getOrNull()
 
-class SimpleQrWebServer(
-    private val port: Int,
-    private val isRu: Boolean,
-    private val onReceived: (Map<String, String>) -> Unit
-) {
+class SimpleQrWebServer(private val port: Int, private val isRu: Boolean, private val onReceived: (Map<String, String>) -> Unit) {
     private var serverSocket: ServerSocket? = null
     @Volatile private var running = false
-
     fun start() {
         running = true
         thread(isDaemon = true) {
@@ -505,44 +514,30 @@ class SimpleQrWebServer(
             }
         }
     }
-
-    fun stop() {
-        running = false
-        runCatching { serverSocket?.close() }
-    }
-
+    fun stop() { running = false; runCatching { serverSocket?.close() } }
     private fun handle(socket: java.net.Socket) {
         socket.use { s ->
             val reader = BufferedReader(InputStreamReader(s.getInputStream(), Charsets.UTF_8))
             val out = PrintWriter(s.getOutputStream(), true)
             val reqLine = reader.readLine() ?: return
-            var contentLength = 0
-            var line: String?
+            var contentLength = 0; var line: String?
             while (reader.readLine().also { line = it } != null && line!!.isNotEmpty()) {
-                if (line!!.lowercase().startsWith("content-length:")) {
-                    contentLength = line!!.substringAfter(":").trim().toIntOrNull() ?: 0
-                }
+                if (line!!.lowercase().startsWith("content-length:")) contentLength = line!!.substringAfter(":").trim().toIntOrNull() ?: 0
             }
             if (reqLine.startsWith("POST")) {
-                val buf = CharArray(contentLength)
-                reader.read(buf, 0, contentLength)
-                val map = String(buf).split("&").associate {
-                    val p = it.split("=")
-                    URLDecoder.decode(p.getOrNull(0) ?: "", "UTF-8") to URLDecoder.decode(p.getOrNull(1) ?: "", "UTF-8").trim()
-                }
+                val buf = CharArray(contentLength); reader.read(buf, 0, contentLength)
+                val map = String(buf).split("&").associate { val p = it.split("="); URLDecoder.decode(p.getOrNull(0) ?: "", "UTF-8") to URLDecoder.decode(p.getOrNull(1) ?: "", "UTF-8").trim() }
                 onReceived(map)
                 val ok = if (isRu) "✅ Отправлено в CCTV Plus!" else "✅ Sent to CCTV Plus!"
                 sendHtml(out, "<html><body style='background:#121417;color:#10B981;font-family:sans-serif;text-align:center;padding:40px;'><h2>$ok</h2></body></html>")
             } else sendHtml(out, buildHtmlForm())
         }
     }
-
     private fun sendHtml(out: PrintWriter, html: String) {
         val bytes = html.toByteArray(Charsets.UTF_8)
         out.print("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: ${bytes.size}\r\n\r\n$html")
         out.flush()
     }
-
     private fun buildHtmlForm(): String {
         val title = if (isRu) "Пульт загрузки CCTV Plus" else "CCTV Plus Remote Loader"
         val btn = if (isRu) "🚀 Отправить в приложение" else "🚀 Send to App"
