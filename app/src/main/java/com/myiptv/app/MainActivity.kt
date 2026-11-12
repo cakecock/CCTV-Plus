@@ -8,7 +8,10 @@ package com.myiptv.app
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -107,7 +110,6 @@ class MainActivity : ComponentActivity() {
             }
             val S = if (isRu) RuStrings else EnStrings
 
-            // Настройки видеоплеера
             var playerResizeMode by remember { mutableStateOf(prefs.getInt("player_resize", 0)) }
             var playerBufferMode by remember { mutableStateOf(prefs.getInt("player_buffer", 1)) }
             var playerDefaultUa by remember { mutableStateOf(prefs.getString("player_ua", "Lavf/60.3.100") ?: "Lavf/60.3.100") }
@@ -143,7 +145,7 @@ class MainActivity : ComponentActivity() {
 
             var currentChannel by remember { mutableStateOf<Channel?>(null) }
             var previousChannel by remember { mutableStateOf<Channel?>(null) }
-            var activeArchiveStream by remember { mutableStateOf<Pair<String, String>?>(null) } // Название передачи -> Архивный URL
+            var activeArchiveStream by remember { mutableStateOf<Pair<String, String>?>(null) }
             var currentVodStream by remember { mutableStateOf<Pair<String, String>?>(null) }
             var isFullscreen by remember { mutableStateOf(false) }
             var epgDialogChannel by remember { mutableStateOf<Channel?>(null) }
@@ -359,7 +361,6 @@ class MainActivity : ComponentActivity() {
 
             MaterialTheme(colorScheme = colorScheme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = themePalette.bg) {
-                    // Диалог полной Телепрограммы и Архива передач (Catch-Up)
                     if (epgDialogChannel != null) {
                         val ch = epgDialogChannel!!
                         val schedule = remember(ch, epgScheduleMap) { findChannelSchedule(ch, epgScheduleMap) }
@@ -564,8 +565,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
-
-// ================= ОКНО ТЕЛЕПРОГРАММЫ И АРХИВА (CATCH-UP) =================
 
 @Composable
 fun EpgAndArchiveDialog(
@@ -824,7 +823,6 @@ fun LiveTvScreen(
                     }
 
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        // Кнопка открытия Телепрограммы и Архива передач
                         OutlinedButton(
                             onClick = { onOpenEpgDialog(currentChannel) },
                             modifier = Modifier.fillMaxWidth().height(34.dp),
@@ -901,7 +899,6 @@ fun LiveTvScreen(
                             Text(ch.group, fontSize = 12.sp, color = theme.subtext, maxLines = 1)
                         }
                     }
-                    // Кнопка открытия расписания и архива конкретного канала
                     IconButton(onClick = { onOpenEpgDialog(ch) }) {
                         Icon(Icons.Default.Schedule, null, tint = theme.primary)
                     }
@@ -1069,6 +1066,9 @@ fun AccordionSettingsScreen(
     var latestRelease by remember { mutableStateOf<ReleaseInfo?>(null) }
     var isUpdating by remember { mutableStateOf(false) }
     var backupStatus by remember { mutableStateOf("") }
+
+    var issueDescription by remember { mutableStateOf("") }
+    var reportStatus by remember { mutableStateOf("") }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
@@ -1350,7 +1350,7 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 7. СПИСОК ИЗМЕНЕНИЙ (CHANGELOG — СИНХРОНИЗИРОВАН С ВЕРСИЕЙ СБОРКИ!)
+        // 7. СПИСОК ИЗМЕНЕНИЙ (CHANGELOG)
         ExpandableSectionRow(S.catChangelog, expandedRow == 7, theme, { toggleRow(7) }) {
             AppChangelogHistory.forEachIndexed { idx, rel ->
                 val verTitle = if (idx == 0 || rel.version == "CURRENT") {
@@ -1371,8 +1371,83 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 8. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ
-        ExpandableSectionRow(if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)", expandedRow == 8, theme, { toggleRow(8) }) {
+        // 8. ЛИЦЕНЗИЯ И УСЛОВИЯ ИСПОЛЬЗОВАНИЯ
+        ExpandableSectionRow(S.catLicense, expandedRow == 8, theme, { toggleRow(8) }) {
+            val items = if (S.isRu) LicenseItemsRu else LicenseItemsEn
+            items.forEach { paragraph ->
+                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp)) {
+                    Text(paragraph, fontSize = 13.sp, color = theme.text)
+                }
+            }
+        }
+
+        // 9. ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ
+        ExpandableSectionRow(S.catPrivacy, expandedRow == 9, theme, { toggleRow(9) }) {
+            val items = if (S.isRu) PrivacyItemsRu else PrivacyItemsEn
+            items.forEach { paragraph ->
+                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp)) {
+                    Text(paragraph, fontSize = 13.sp, color = theme.text)
+                }
+            }
+        }
+
+        // 10. СООБЩИТЬ О ПРОБЛЕМЕ (ОБРАТНАЯ СВЯЗЬ)
+        ExpandableSectionRow(S.catReportIssue, expandedRow == 10, theme, { toggleRow(10) }) {
+            Text(
+                text = if (S.isRu) "Опишите проблему, и приложение сформирует безопасный технический отчет (ваши ключи подписки автоматически скрываются звездочками ***):"
+                else "Describe the issue below to generate a safe diagnostic report (private keys are automatically masked):",
+                fontSize = 13.sp,
+                color = theme.subtext
+            )
+            OutlinedTextField(
+                value = issueDescription,
+                onValueChange = { issueDescription = it },
+                label = { Text(if (S.isRu) "Что именно пошло не так?" else "Describe the problem...") },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(
+                onClick = {
+                    val reportText = buildString {
+                        appendLine("=== CCTV Plus Bug Report ===")
+                        appendLine("App Version: v$installedVerName (Build #$installedVerCode)")
+                        appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, SDK ${Build.VERSION.SDK_INT})")
+                        appendLine("Theme: ${theme.id} | Resize: $playerResizeMode | Buffer: $playerBufferMode")
+                        appendLine("Playlists count: ${playlists.size} | EPG Status: $epgStatusText")
+                        appendLine("VPortal Diag: ${maskSensitiveKeys(vportalDiagnostic)}")
+                        appendLine("User Comment: ${issueDescription.ifBlank { "No comment" }}")
+                    }
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("CCTVBugReport", reportText))
+                    reportStatus = if (S.isRu) "✅ Тех. отчет скопирован в буфер! Нажмите кнопку GitHub ниже, чтобы отправить его." else "✅ Report copied to clipboard!"
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.BugReport, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (S.isRu) "📋 Скопировать тех. отчет для разработчика" else "📋 Copy Safe Diagnostic Report", fontWeight = FontWeight.Bold)
+            }
+            OutlinedButton(
+                onClick = {
+                    runCatching {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/cakecock")).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.OpenInNew, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (S.isRu) "🌐 Открыть GitHub разработчика (cakecock)" else "🌐 Open Developer GitHub (cakecock)")
+            }
+            if (reportStatus.isNotBlank()) {
+                Text(reportStatus, fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // 11. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ
+        ExpandableSectionRow(if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)", expandedRow == 11, theme, { toggleRow(11) }) {
             Text(
                 text = if (S.isRu) "Установленная версия: v$installedVerName (Build #$installedVerCode)" else "Installed version: v$installedVerName (Build #$installedVerCode)",
                 fontSize = 13.sp,
