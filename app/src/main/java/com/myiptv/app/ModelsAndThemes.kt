@@ -59,49 +59,45 @@ val AppChangelogHistory = listOf(
         version = "CURRENT",
         date = "12.11.2026",
         changesRu = listOf(
-            "📺 Справа от мини-плеера кнопка «Программа / Архив» заменена на информативную кликабельную плашку с текущей передачей, временем эфира и полоской прогресса, а список каналов очищен от лишних значков.",
-            "📊 Исправлено дергание временной полоски в прямом эфире: теперь в эфире отображается плавная шкала времени от начала текущей передачи, а в режиме Архива работает ползунок перемотки по всей записи.",
-            "🕒 Добавлена настройка отображения компактных часов реального времени (Выкл / В левом верхнем углу / В правом верхнем углу).",
-            "📅 Добавлена автоматическая резервная подгрузка телепрограммы (EPG), если в самом M3U-плейлисте не прописан тег url-tvg."
+            "📺 Прозрачный 3-колоночный ТВ-Гид поверх видео (режим TiviMate: Категории -> Каналы -> Программа и Архив).",
+            "🏟 Режим «Мультиэкран (Multi-View)»: одновременный просмотр до 4 телеканалов на одном экране с переключением звука.",
+            "👆 Свайпы в полноэкранном плеере (слева — Яркость, справа — Громкость) + режим «Картинка в картинке» (PiP).",
+            "🔊 Выбор звуковой дорожки (озвучки) в плеере + Родительский контроль (PIN-код на категории 18+).",
+            "🔄 Умная проверка обновлений: показ статуса «Обновлений нет», если уже установлена актуальная версия."
         ),
         changesEn = listOf(
-            "📺 Replaced the 'EPG / Archive' button next to the mini-player with an interactive live program info card & progress bar, and cleaned up channel list rows.",
-            "📊 Fixed live stream timeline jitter: Live TV now shows smooth elapsed/remaining broadcast progress, while Archive mode provides a full seek/rewind slider.",
-            "🕒 Added real-time overlay clock setting (Off / Top-Left / Top-Right).",
-            "📅 Added automatic fallback EPG loading when playlist lacks an embedded url-tvg tag."
+            "📺 Transparent 3-column TV Guide overlay over live video (TiviMate style).",
+            "🏟 Multi-View mode: watch up to 4 channels simultaneously on one screen.",
+            "👆 Swipe gestures in fullscreen (left for Brightness, right for Volume) + Picture-in-Picture (PiP) mode.",
+            "🔊 Audio track selector in player + Parental Control PIN for 18+ categories.",
+            "🔄 Smart update check: displays 'No updates available' when already on the latest version."
         )
     ),
     ChangelogRelease(
-        version = "v1.26",
+        version = "v1.48",
         date = "12.11.2026",
         changesRu = listOf(
-            "📡 Пункты «Плейлисты», «Телепрограмма», «Порталы» и «QR-Пульт» объединены в раздел «Источники и Контент» с выпадающим списком.",
-            "📱 Выбор устройства (Смартфон / Телевизор) и управления (Сенсор / Пульт ДУ) + обновленные 10 тем оформления."
+            "📺 Интерактивная плашка текущей передачи и архива рядом с мини-плеером.",
+            "📊 Плавная шкала времени эфира + ползунок перемотки архива + экранные часы реального времени."
         ),
         changesEn = listOf(
-            "📡 Grouped Playlists, EPG, Portals, and QR Remote into a unified 'Sources & Content' dropdown menu.",
-            "📱 Device Type & Control Mode selection + 10 refined color themes."
-        )
-    ),
-    ChangelogRelease(
-        version = "v1.25",
-        date = "12.11.2026",
-        changesRu = listOf(
-            "⚖️ Добавлены разделы «Лицензия», «Конфиденциальность» и «Сообщить о проблеме».",
-            "📅 Интерактивное окно «Телепрограмма и Архив (Catch-Up)» и настройки видеоплеера."
-        ),
-        changesEn = listOf(
-            "⚖️ Added License, Privacy Policy, and Report an Issue sections.",
-            "📅 Interactive TV Guide & Catch-Up Archive window and player settings."
+            "📺 Interactive live program & archive info card next to the mini-player.",
+            "📊 Smooth live progress bar + archive seek slider + real-time screen clock."
         )
     )
 )
 
+fun isAdultCategoryOrChannel(text: String): Boolean {
+    val low = text.lowercase()
+    return low.contains("18+") || low.contains("взросл") || low.contains("эротик") ||
+        low.contains("эрот") || low.contains("adult") || low.contains("xxx") || low.contains("erotic")
+}
+
 val LicenseItemsRu = listOf(
     "1. Назначение программы: Приложение «CCTV Plus» является исключительно программным медиаплеером (оболочкой для воспроизведения потокового видео) и предоставляется по принципу «как есть» (AS IS).",
-    "2. Отсутствие встроенного контента: Разработчик (cakecock) НЕ предоставляет, НЕ хранит, НЕ ретранслирует и НЕ продает телеканалы, фильмы, сериалы или плейлисты. Приложение не содержит встроенных медиа-источников.",
+    "2. Отсутствие встроенного контента: Разработчик (cakecock) НЕ предоставляет, НЕ хранит, НЕ ретранслирует и НЕ продает телеканалы, фильмы, сериалы или плейлисты.",
     "3. Ответственность пользователя: Все ссылки на плейлисты (M3U/M3U8), порталы (VPortal, Stalker) и телепрограмму (EPG) добавляются пользователем самостоятельно.",
-    "4. Компоненты с открытым кодом: В составе приложения используются библиотеки AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil и ZXing (Apache License 2.0).",
+    "4. Компоненты с открытым кодом: Используются библиотеки AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil и ZXing (Apache License 2.0).",
     "5. Авторские права: © 2026 cakecock. Все права защищены."
 )
 
@@ -231,7 +227,7 @@ val RuStrings = Strings(
     reconnecting = "Поток прервался, переподключаемся...",
     catSourcesGroup = "📡 Источники и Контент (Плейлисты, EPG, Порталы, QR)",
     catAppearance = "🎨 Внешний вид, Темы и Язык",
-    catPlayer = "⚙️ Плеер, Часы, Устройство и Управление",
+    catPlayer = "⚙️ Плеер, Часы, PIN-код и Управление",
     catPlaylists = "📺 Плейлисты (M3U / M3U8)",
     catEpg = "📅 Телепрограмма (EPG)",
     catPortals = "🎬 Порталы (VPortal и Stalker)",
@@ -268,7 +264,7 @@ val EnStrings = Strings(
     reconnecting = "Stream dropped, reconnecting...",
     catSourcesGroup = "📡 Sources & Content (Playlists, EPG, Portals, QR)",
     catAppearance = "🎨 Appearance, Themes & Language",
-    catPlayer = "⚙️ Player, Clock, Device & Controls",
+    catPlayer = "⚙️ Player, Clock, PIN & Controls",
     catPlaylists = "📺 Playlists (M3U / M3U8)",
     catEpg = "📅 TV Guide (EPG)",
     catPortals = "🎬 Portals (VPortal & Stalker)",
@@ -329,6 +325,8 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     root.put("device_type", prefs.getString("device_type", "mobile"))
     root.put("control_mode", prefs.getString("control_mode", "touch"))
     root.put("clock_pos", prefs.getInt("clock_pos", 0))
+    root.put("parental_enabled", prefs.getBoolean("parental_enabled", false))
+    root.put("parental_pin", prefs.getString("parental_pin", "0000"))
     root.put("theme_id", prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
     root.put("playlists_json", prefs.getString("playlists_json", "[]"))
     root.put("selected_playlist_id", prefs.getString("selected_playlist_id", ""))
@@ -361,6 +359,8 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
         .putString("device_type", root.optString("device_type", "mobile"))
         .putString("control_mode", root.optString("control_mode", "touch"))
         .putInt("clock_pos", root.optInt("clock_pos", 0))
+        .putBoolean("parental_enabled", root.optBoolean("parental_enabled", false))
+        .putString("parental_pin", root.optString("parental_pin", "0000"))
         .putString("theme_id", root.optString("theme_id", AppThemePalette.DARK_EMERALD.id))
         .putString("playlists_json", root.optString("playlists_json", "[]"))
         .putString("selected_playlist_id", root.optString("selected_playlist_id", ""))
