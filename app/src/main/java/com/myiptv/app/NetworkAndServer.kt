@@ -5,7 +5,6 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -38,6 +37,15 @@ object NetworkLoader {
 
     private val attrRegex = Regex("([a-zA-Z0-9_-]+)=\"([^\"]*)\"")
     private val vportalRegex = Regex("^portal::\\[key:([^\\]]+)\\](https?://.+)$", RegexOption.IGNORE_CASE)
+    private const val OTT_UA = "Mozilla/5.0 (SmartHub; SMART-TV; U; Linux/SmartTV) AppleWebKit/531.2+ OttPlayer/2.0"
+
+    fun parseVPortalCredentials(rawUrl: String): Pair<String, String> {
+        val match = vportalRegex.find(rawUrl.trim())
+        val key = match?.groupValues?.get(1)?.trim() ?: ""
+        var baseUrl = match?.groupValues?.get(2)?.trim() ?: rawUrl.trim()
+        if (!baseUrl.endsWith("/")) baseUrl += "/"
+        return key to baseUrl
+    }
 
     suspend fun loadM3u(url: String): M3uParseResult = withContext(Dispatchers.IO) {
         val channels = mutableListOf<Channel>()
@@ -104,178 +112,186 @@ object NetworkLoader {
         M3uParseResult(channels, movies, embeddedEpgUrl)
     }
 
-    suspend fun loadVPortal(rawUrl: String): Pair<List<VodMovie>, String> = withContext(Dispatchers.IO) {
-        val movies = mutableListOf<VodMovie>()
-        val logBuilder = StringBuilder()
+    // Загрузка корня или любой папки/категории/фильма VPortal через POST JSON
+    suspend fun loadVPortalNode(
+        rawPortalUrl: String,
+        customTargetUrl: String? = null,
+        customRequestJson: String? = null,
+        searchQuery: String? = null
+    ): Pair<List<VodMovie>, String> = withContext(Dispatchers.IO) {
+        val itemsOut = mutableListOf<VodMovie>()
+        var diagnostic = ""
 
         runCatching {
-            val match = vportalRegex.find(rawUrl.trim())
-            val key = match?.groupValues?.get(1)?.trim() ?: ""
-            var baseUrl = match?.groupValues?.get(2)?.trim() ?: rawUrl.trim()
-            if (!baseUrl.endsWith("/")) baseUrl += "/"
+            val (key, baseUrl) = parseVPortalCredentials(rawPortalUrl)
+            val targetUrl = customTargetUrl?.takeIf { it.isNotBlank() } ?: baseUrl
 
-            val ottUa = "Mozilla/5.0 (SmartHub; SMART-TV; U; Linux/SmartTV) AppleWebKit/531.2+ OttPlayer/2.0"
-            val jsonPayload = "{\"key\":\"" + key + "\"}"
-
-            val probes = listOf(
-                "GET ?key" to Request.Builder()
-                    .url("${baseUrl}?key=$key")
-                    .header("User-Agent", ottUa)
-                    .header("key", key)
-                    .header("X-Api-Key", key)
-                    .build(),
-                "GET Base+Headers" to Request.Builder()
-                    .url(baseUrl)
-                    .header("User-Agent", ottUa)
-                    .header("key", key)
-                    .header("X-Api-Key", key)
-                    .header("Authorization", "Bearer $key")
-                    .header("Cookie", "key=$key")
-                    .build(),
-                "POST Form" to Request.Builder()
-                    .url(baseUrl)
-                    .header("User-Agent", ottUa)
-                    .header("key", key)
-                    .post(FormBody.Builder().add("key", key).build())
-                    .build(),
-                "POST JSON" to Request.Builder()
-                    .url(baseUrl)
-                    .header("User-Agent", ottUa)
-                    .header("key", key)
-                    .post(jsonPayload.toRequestBody("application/json".toMediaType()))
-                    .build()
-            )
-
-            for ((probeName, request) in probes) {
-                runCatching {
-                    client.newCall(request).execute().use { resp ->
-                        val body = resp.body?.string()?.trim() ?: ""
-                        val preview = body.take(150).replace("\n", " ")
-                        logBuilder.append("[$probeName -> HTTP ${resp.code}: $preview]\n")
-                        if (resp.isSuccessful && body.isNotEmpty()) {
-                            parseVPortalResponse(body, baseUrl, key, ottUa, movies)
-                        }
-                    }
-                }.onFailure { err ->
-                    logBuilder.append("[$probeName -> Err: ${err.localizedMessage}]\n")
-                }
-                if (movies.isNotEmpty()) break
+            val reqObj = if (!customRequestJson.isNullOrBlank()) {
+                runCatching { JSONObject(customRequestJson) }.getOrElse { JSONObject() }
+            } else {
+                JSONObject()
             }
-        }.onFailure { e ->
-            logBuilder.append("Error: ${e.localizedMessage}")
+            if (key.isNotEmpty() && !reqObj.has("key")) {
+                reqObj.put("key", key)
+            }
+            if (!searchQuery.isNullOrBlank()) {
+                reqObj.put("search", searchQuery)
+                reqObj.put("query", searchQuery)
+            }
+
+            val payloadStr = reqObj.toString()
+            val request = Request.Builder()
+                .url(targetUrl)
+                .header("User-Agent", OTT_UA)
+                .header("Accept", "application/json")
+                .post(payloadStr.toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .build()
+
+            client.newCall(request).execute().use { resp ->
+                val body = resp.body?.string()?.trim() ?: ""
+                diagnostic = "HTTP ${resp.code} | Sent: $payloadStr | Resp: " + body.take(350).replace("\n", " ")
+                if (resp.isSuccessful && body.isNotEmpty()) {
+                    parseVideoportalJson(body, targetUrl, reqObj, itemsOut)
+                }
+            }
+        }.onFailure { err ->
+            diagnostic = "Ошибка VPortal: ${err.localizedMessage}"
         }
 
-        movies to logBuilder.toString().trim()
+        itemsOut to diagnostic
     }
 
-    private fun parseVPortalResponse(
+    private fun parseVideoportalJson(
         body: String,
-        baseUrl: String,
-        key: String,
-        ua: String,
+        defaultApiUrl: String,
+        parentRequest: JSONObject,
         out: MutableList<VodMovie>
     ) {
-        if (body.startsWith("#EXTM3U")) {
-            var title = ""
-            var group = "VPortal"
-            var poster: String? = null
-            var idx = 1
-            for (l in body.lines()) {
-                val t = l.trim()
-                if (t.startsWith("#EXTINF:")) {
-                    title = t.substringAfterLast(",").trim()
-                    val attrs = attrRegex.findAll(t).associate { it.groupValues[1].lowercase() to it.groupValues[2] }
-                    poster = attrs["tvg-logo"]
-                    group = attrs["group-title"] ?: group
-                } else if (t.startsWith("http")) {
-                    out.add(VodMovie("vp_$idx", title.ifEmpty { "Фильм $idx" }, group, poster, "", "", "", t))
-                    idx++
+        runCatching {
+            val rootObj = if (body.startsWith("{")) JSONObject(body) else null
+            val rootUrl = rootObj?.optString("url")?.takeIf { it.isNotBlank() } ?: defaultApiUrl
+            val rootReq = rootObj?.optJSONObject("request") ?: parentRequest
+
+            // Проверяем, не вернул ли сервер сразу прямую ссылку на видеопоток в корне ответа
+            if (rootObj != null) {
+                val rootStream = rootObj.optString("stream_url")
+                    .ifEmpty { rootObj.optString("video_url") }
+                    .ifEmpty { rootObj.optString("file") }
+                    .ifEmpty { rootObj.optString("stream") }
+                if (rootStream.startsWith("http")) {
+                    out.add(
+                        VodMovie(
+                            id = "vp_direct_1",
+                            title = rootObj.optString("title", rootObj.optString("name", "Видео")),
+                            category = "VPortal",
+                            posterUrl = rootObj.optString("poster", rootObj.optString("cover")),
+                            description = rootObj.optString("description", ""),
+                            year = rootObj.optString("year", ""),
+                            rating = rootObj.optString("rating", ""),
+                            streamUrl = rootStream,
+                            isFolder = false
+                        )
+                    )
                 }
             }
-            return
-        }
 
-        runCatching {
-            val arr = if (body.startsWith("[")) {
-                JSONArray(body)
-            } else {
-                val obj = JSONObject(body)
-                obj.optJSONArray("data")
-                    ?: obj.optJSONArray("items")
-                    ?: obj.optJSONArray("movies")
-                    ?: obj.optJSONArray("categories")
-                    ?: obj.optJSONArray("result")
-                    ?: obj.optJSONArray("playlist")
+            val arr = when {
+                body.startsWith("[") -> JSONArray(body)
+                rootObj != null -> rootObj.optJSONArray("items")
+                    ?: rootObj.optJSONArray("data")
+                    ?: rootObj.optJSONArray("movies")
+                    ?: rootObj.optJSONArray("playlist")
+                    ?: rootObj.optJSONArray("channels")
                     ?: JSONArray()
+                else -> JSONArray()
             }
-
-            val categoryIds = mutableListOf<Pair<String, String>>()
 
             for (i in 0 until arr.length()) {
                 val item = arr.optJSONObject(i) ?: continue
-                val stream = item.optString("url")
-                    .ifEmpty { item.optString("stream_url") }
+                val itemType = item.optString("type", "").lowercase()
+                val title = item.optString("title")
+                    .ifEmpty { item.optString("name") }
+                    .ifEmpty { item.optString("label") }
+                    .ifEmpty { "Раздел #${i + 1}" }
+
+                val poster = item.optString("poster")
+                    .ifEmpty { item.optString("logo") }
+                    .ifEmpty { item.optString("icon") }
+                    .ifEmpty { item.optString("cover") }
+                    .ifEmpty { item.optString("img") }
+                    .ifEmpty { item.optString("image") }
+
+                val desc = item.optString("description")
+                    .ifEmpty { item.optString("plot") }
+                    .ifEmpty { item.optString("info") }
+
+                val year = item.optString("year", "")
+                val rating = item.optString("rating", item.optString("rating_kp", item.optString("imdb", "")))
+
+                val itemUrl = item.optString("url").takeIf { it.isNotBlank() } ?: rootUrl
+                val directMedia = item.optString("stream_url")
                     .ifEmpty { item.optString("video_url") }
                     .ifEmpty { item.optString("file") }
-                    .ifEmpty { item.optString("cmd") }
+                    .ifEmpty { item.optString("stream") }
+                    .ifEmpty { item.optString("src") }
 
-                val title = item.optString("name")
-                    .ifEmpty { item.optString("title") }
-                    .ifEmpty { "Видео #${i + 1}" }
+                val childReqObj = item.optJSONObject("request")
 
-                if (stream.isNotEmpty() && (stream.startsWith("http") || stream.contains(".m3u8") || stream.contains(".mp4"))) {
+                // Определяем: это папка/узел портала (нужен следующий POST-запрос) или готовый видеопоток
+                val isMediaUrl = directMedia.startsWith("http") ||
+                    itemUrl.endsWith(".m3u8", true) ||
+                    itemUrl.endsWith(".mp4", true) ||
+                    itemUrl.endsWith(".mkv", true) ||
+                    itemUrl.endsWith(".ts", true) ||
+                    (itemType in listOf("stream", "video", "file") && childReqObj == null && !itemUrl.contains("/api/v1"))
+
+                if (isMediaUrl && childReqObj == null) {
+                    val finalStream = directMedia.ifEmpty { itemUrl }
                     out.add(
                         VodMovie(
-                            id = "vp_json_${out.size + 1}",
+                            id = "vp_media_${i}_${System.nanoTime()}",
                             title = title,
-                            category = item.optString("category", item.optString("genre", "Кинозал")),
-                            posterUrl = item.optString("poster", item.optString("logo", item.optString("cover"))),
-                            description = item.optString("description", item.optString("plot", "")),
-                            year = item.optString("year", ""),
-                            rating = item.optString("rating", item.optString("rating_kp", "")),
-                            streamUrl = stream
+                            category = "Видео",
+                            posterUrl = poster.ifEmpty { null },
+                            description = desc,
+                            year = year,
+                            rating = rating,
+                            streamUrl = finalStream,
+                            isFolder = false
                         )
                     )
                 } else {
-                    val catId = item.optString("id").ifEmpty { item.optString("category_id") }
-                    if (catId.isNotEmpty() && categoryIds.size < 5) {
-                        categoryIds.add(catId to title)
-                    }
-                }
-            }
-
-            if (out.isEmpty() && categoryIds.isNotEmpty()) {
-                for ((catId, catName) in categoryIds) {
-                    val catUrl = "${baseUrl}?key=$key&category_id=$catId&cat=$catId&id=$catId"
-                    val req = Request.Builder().url(catUrl).header("User-Agent", ua).header("key", key).build()
-                    runCatching {
-                        client.newCall(req).execute().use { r ->
-                            val subBody = r.body?.string()?.trim() ?: ""
-                            if (r.isSuccessful && subBody.isNotEmpty()) {
-                                val subArr = if (subBody.startsWith("[")) JSONArray(subBody)
-                                else JSONObject(subBody).optJSONArray("data")
-                                    ?: JSONObject(subBody).optJSONArray("items") ?: JSONArray()
-                                for (j in 0 until subArr.length()) {
-                                    val m = subArr.optJSONObject(j) ?: continue
-                                    val sUrl = m.optString("url").ifEmpty { m.optString("stream_url") }.ifEmpty { m.optString("file") }
-                                    if (sUrl.isNotEmpty()) {
-                                        out.add(
-                                            VodMovie(
-                                                id = "vp_sub_${out.size + 1}",
-                                                title = m.optString("name", m.optString("title", "Фильм")),
-                                                category = catName,
-                                                posterUrl = m.optString("poster", m.optString("cover")),
-                                                description = m.optString("description"),
-                                                year = m.optString("year"),
-                                                rating = m.optString("rating"),
-                                                streamUrl = sUrl
-                                            )
-                                        )
-                                    }
-                                }
-                            }
+                    // Собираем JSON-запрос для перехода внутрь этой категории/фильма/сериала
+                    val mergedReq = JSONObject(rootReq.toString())
+                    if (childReqObj != null) {
+                        val keys = childReqObj.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            mergedReq.put(k, childReqObj.get(k))
+                        }
+                    } else {
+                        val idVal = item.optString("id").ifEmpty { item.optString("category_id") }
+                        if (idVal.isNotEmpty()) {
+                            mergedReq.put("id", idVal)
+                            mergedReq.put("category", idVal)
                         }
                     }
+
+                    out.add(
+                        VodMovie(
+                            id = "vp_node_${i}_${System.nanoTime()}",
+                            title = title,
+                            category = if (itemType == "category") "Категория" else itemType.ifEmpty { "Папка" },
+                            posterUrl = poster.ifEmpty { null },
+                            description = desc,
+                            year = year,
+                            rating = rating,
+                            streamUrl = "",
+                            isFolder = true,
+                            requestPayloadJson = mergedReq.toString(),
+                            targetApiUrl = itemUrl
+                        )
+                    )
                 }
             }
         }
