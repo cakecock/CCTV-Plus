@@ -59,28 +59,36 @@ val AppChangelogHistory = listOf(
         version = "CURRENT",
         date = "12.11.2026",
         changesRu = listOf(
-            "🎬 Добавлен блок «Выбор видеоплеера (Движок)»: переключение между встроенным ExoPlayer (Media3), Системным плеером Android (VideoView) и Внешним плеером (VLC, MX Player, Vimu).",
-            "⏪ Добавлена настройка глубины архива телепрограммы: перемотка на 1, 3 или 5 дней назад + автопрокрутка списка передач к текущему прямому эфиру.",
-            "🕒 Экранные часы реального времени теперь отображаются только внутри видеоплеера, не закрывая меню приложения.",
-            "📅 Добавлены встроенные источники EPG (TVLider/Edem и IPTVx.one) в выпадающий список и улучшено сопоставление каналов."
+            "✨ Полная переработка меню Настроек: короткие и понятные названия, логичный порядок разделов и компактный вид.",
+            "🎮 Настройки устройства, управления и защиты 18+ (PIN) вынесены в отдельный удобный раздел.",
+            "🎨 Темы оформления разделены на группы «Тёмные» и «Светлые» с лаконичными названиями."
         ),
         changesEn = listOf(
-            "🎬 Added Video Player Engine selector: Built-in ExoPlayer (Media3), Native Android VideoView, or External Player (VLC, MX Player, Vimu).",
-            "⏪ Added Catch-Up Archive depth setting (1, 3, or 5 days back) + auto-scroll to current live broadcast in EPG.",
-            "🕒 Real-time clock now appears strictly inside the video player.",
-            "📅 Added built-in EPG presets (TVLider & IPTVx.one) and improved channel matching."
+            "✨ Complete Settings redesign: shorter, clearer labels and logical section order.",
+            "🎮 Separated Device, Control Mode, and 18+ PIN into a dedicated section.",
+            "🎨 Grouped themes cleanly into Dark and Light sections."
+        )
+    ),
+    ChangelogRelease(
+        version = "v1.60",
+        date = "12.11.2026",
+        changesRu = listOf(
+            "🎬 Добавлен выбор движка плеера (ExoPlayer / Системный / Внешний), глубина архива (1, 3, 5 дней) и часы строго внутри плеера.",
+            "🔄 Кнопка проверки обновлений перенесена прямо над именем разработчика."
+        ),
+        changesEn = listOf(
+            "🎬 Added Player Engine selector, Catch-Up depth (1/3/5 days), and player-only clock.",
+            "🔄 Moved Update button right above the developer signature."
         )
     ),
     ChangelogRelease(
         version = "v1.50",
         date = "12.11.2026",
         changesRu = listOf(
-            "📺 Прозрачный 3-колоночный ТВ-Гид поверх видео (режим TiviMate) + Мультиэкран на 4 канала.",
-            "👆 Свайпы яркости и громкости в плеере + режим «Картинка в картинке» (PiP) + выбор звуковой дорожки и PIN-код на 18+."
+            "📺 Прозрачный 3-колоночный ТВ-Гид поверх видео + Мультиэкран на 4 канала + свайпы яркости и громкости."
         ),
         changesEn = listOf(
-            "📺 Transparent 3-column TV Guide overlay + 4-channel Multi-View.",
-            "👆 Brightness/Volume swipes + PiP mode + Audio track selector & 18+ PIN."
+            "📺 Transparent 3-column TV Guide overlay + 4-channel Multi-View + swipe gestures."
         )
     )
 )
@@ -92,35 +100,35 @@ fun isAdultCategoryOrChannel(text: String): Boolean {
 }
 
 val LicenseItemsRu = listOf(
-    "1. Назначение программы: Приложение «CCTV Plus» является исключительно программным медиаплеером (оболочкой для воспроизведения потокового видео) и предоставляется по принципу «как есть» (AS IS).",
-    "2. Отсутствие встроенного контента: Разработчик (cakecock) НЕ предоставляет, НЕ хранит, НЕ ретранслирует и НЕ продает телеканалы, фильмы, сериалы или плейлисты.",
-    "3. Ответственность пользователя: Все ссылки на плейлисты (M3U/M3U8), порталы (VPortal, Stalker) и телепрограмму (EPG) добавляются пользователем самостоятельно.",
-    "4. Компоненты с открытым кодом: Используются библиотеки AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil и ZXing (Apache License 2.0).",
-    "5. Авторские права: © 2026 cakecock. Все права защищены."
+    "1. Назначение: CCTV Plus — это программный медиаплеер для воспроизведения видеопотоков («как есть»).",
+    "2. Контент: Разработчик (cakecock) не предоставляет, не хранит и не продает телеканалы, фильмы или плейлисты.",
+    "3. Ответственность: Все ссылки (M3U, VPortal, Stalker, EPG) пользователь добавляет самостоятельно и несет за них ответственность.",
+    "4. Открытый код: Используются библиотеки AndroidX, Media3 (ExoPlayer), OkHttp, Coil и ZXing (Apache License 2.0).",
+    "5. Авторские права: © 2026 cakecock."
 )
 
 val LicenseItemsEn = listOf(
-    "1. Software Purpose: 'CCTV Plus' is strictly a media player application provided 'AS IS'.",
-    "2. No Built-in Content: The developer (cakecock) does NOT provide, host, stream, or distribute any TV channels, movies, series, or playlists.",
-    "3. User Responsibility: All playlist URLs, portal credentials, and EPG links are configured solely by the user.",
-    "4. Open Source Licenses: Uses AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil, and ZXing under Apache License 2.0.",
-    "5. Copyright: © 2026 cakecock. All rights reserved."
+    "1. Purpose: CCTV Plus is strictly a media player application provided 'AS IS'.",
+    "2. Content: The developer (cakecock) does NOT provide, host, or distribute any channels, movies, or playlists.",
+    "3. Responsibility: All links (M3U, VPortal, Stalker, EPG) are added solely by the user.",
+    "4. Open Source: Uses AndroidX, Media3 (ExoPlayer), OkHttp, Coil, and ZXing (Apache License 2.0).",
+    "5. Copyright: © 2026 cakecock."
 )
 
 val PrivacyItemsRu = listOf(
-    "1. 100% локальное хранение данных: Все ваши настройки, ссылки на плейлисты, ключи доступа VPortal, MAC-адреса и список избранных каналов хранятся исключительно во внутренней памяти вашего устройства.",
-    "2. Отсутствие слежки и рекламы: Приложение CCTV Plus НЕ собирает персональные данные, НЕ отслеживает историю просмотров и НЕ передает ваши ключи на сторонние серверы.",
-    "3. Прямые сетевые соединения: Доступ к интернету используется только для прямого обращения к указанным вами серверам IPTV/EPG и к GitHub (github.com/cakecock) при проверке обновлений.",
-    "4. Безопасность QR-Пульта: Встроенный веб-сервер быстрой настройки работает исключительно внутри вашей домашней сети Wi-Fi.",
-    "5. Защита при отправке отчетов: При копировании тех. отчета ваши ключи подписки автоматически скрываются звездочками (***)."
+    "1. Локальное хранение: Все плейлисты, ключи порталов, MAC-адреса и избранное хранятся только в памяти вашего устройства.",
+    "2. Без слежки и рекламы: Приложение не собирает личные данные, не отслеживает просмотры и не содержит рекламы.",
+    "3. Интернет: Используется только для подключения к вашим серверам ТВ/EPG и к GitHub при проверке обновлений.",
+    "4. QR-загрузка: Веб-сервер работает только внутри вашей домашней Wi-Fi сети.",
+    "5. Отчеты: При копировании отчета об ошибке ваши ключи подписки автоматически скрываются звездочками (***)."
 )
 
 val PrivacyItemsEn = listOf(
-    "1. 100% Local Storage: All settings, playlists, VPortal keys, and favorites are stored exclusively on your device.",
-    "2. Zero Tracking & Zero Ads: CCTV Plus collects NO personal data and contains NO advertising or analytics SDKs.",
-    "3. Direct Network Connections: Connects only to your configured IPTV/EPG servers and GitHub for updates.",
-    "4. QR Remote Security: Runs strictly within your local home Wi-Fi network.",
-    "5. Safe Bug Reports: Private subscription keys are automatically masked with asterisks (***)."
+    "1. Local Storage: All playlists, portal keys, MAC addresses, and favorites stay strictly on your device.",
+    "2. No Tracking & Ads: Zero personal data collection, zero analytics, and zero ads.",
+    "3. Network: Connects only to your configured IPTV/EPG servers and GitHub for updates.",
+    "4. QR Loader: Runs strictly inside your local home Wi-Fi network.",
+    "5. Bug Reports: Private subscription keys are automatically masked with asterisks (***)."
 )
 
 fun buildArchiveStreamUrl(channel: Channel, startMs: Long, stopMs: Long): String {
@@ -156,16 +164,16 @@ enum class AppThemePalette(
     val text: Color,
     val subtext: Color
 ) {
-    DARK_EMERALD("dark_emerald", "🌑 Тёмная 1: Графит и Изумруд", "🌑 Dark 1: Obsidian & Emerald", true, Color(0xFF121417), Color(0xFF1C2026), Color(0xFF19322B), Color(0xFF10B981), Color.Black, Color(0xFFF3F4F6), Color(0xFF9CA3AF)),
-    DARK_AMETHYST("dark_amethyst", "🌌 Тёмная 2: Королевский Аметист", "🌌 Dark 2: Royal Amethyst & Gold", true, Color(0xFF16121E), Color(0xFF231D30), Color(0xFF35284D), Color(0xFFF59E0B), Color.Black, Color(0xFFFAF5FF), Color(0xFFB8A9C9)),
-    DARK_OCEAN("dark_ocean", "🌊 Тёмная 3: Полночный Сапфир", "🌊 Dark 3: Midnight Sapphire", true, Color(0xFF0E141D), Color(0xFF172130), Color(0xFF1E324A), Color(0xFF38BDF8), Color(0xFF082F49), Color(0xFFF1F5F9), Color(0xFF94A3B8)),
-    DARK_RUBY("dark_ruby", "🍷 Тёмная 4: Бархатный Рубин", "🍷 Dark 4: Velvet Ruby", true, Color(0xFF141115), Color(0xFF211B22), Color(0xFF381E28), Color(0xFFF43F5E), Color.White, Color(0xFFF8FAFC), Color(0xFFA89FA8)),
-    DARK_MOCHA("dark_mocha", "☕ Тёмная 5: Кофейный Кварц", "☕ Dark 5: Espresso & Caramel", true, Color(0xFF141210), Color(0xFF211D1A), Color(0xFF332922), Color(0xFFE5A967), Color(0xFF1C130A), Color(0xFFF5F0EB), Color(0xFFA89F96)),
-    LIGHT_NORDIC("light_nordic", "☀️ Светлая 1: Нордический Лёд", "☀️ Light 1: Nordic Ice", false, Color(0xFFE2E8F0), Color(0xFFF8FAFC), Color(0xFFDBEAFE), Color(0xFF0284C7), Color.White, Color(0xFF1E293B), Color(0xFF64748B)),
-    LIGHT_LATTE("light_latte", "🌅 Светлая 2: Песочный Кашемир", "🌅 Light 2: Warm Cashmere", false, Color(0xFFEAE3DC), Color(0xFFFAF7F2), Color(0xFFF5E6D3), Color(0xFFC25E00), Color.White, Color(0xFF292524), Color(0xFF78716C)),
-    LIGHT_MINT("light_mint", "🌿 Светлая 3: Шалфей и Эвкалипт", "🌿 Light 3: Sage & Eucalyptus", false, Color(0xFFDCE7E1), Color(0xFFF4F9F6), Color(0xFFCBE3D6), Color(0xFF0D9488), Color.White, Color(0xFF1E2925), Color(0xFF5C7067)),
-    LIGHT_SAKURA("light_sakura", "🌸 Светлая 4: Пудровый Кварц", "🌸 Light 4: Rose Quartz", false, Color(0xFFEAE0E3), Color(0xFFFAF5F6), Color(0xFFF2D9E0), Color(0xFFBE185D), Color.White, Color(0xFF2D1E24), Color(0xFF7A636C)),
-    LIGHT_LAVENDER("light_lavender", "💎 Светлая 5: Туманный Ирис", "💎 Light 5: Misty Iris", false, Color(0xFFE2E0EC), Color(0xFFF7F6FB), Color(0xFFDDD6FE), Color(0xFF6D28D9), Color.White, Color(0xFF221E30), Color(0xFF6B6680));
+    DARK_EMERALD("dark_emerald", "🌑 Графит и Изумруд", "🌑 Obsidian & Emerald", true, Color(0xFF121417), Color(0xFF1C2026), Color(0xFF19322B), Color(0xFF10B981), Color.Black, Color(0xFFF3F4F6), Color(0xFF9CA3AF)),
+    DARK_AMETHYST("dark_amethyst", "🌌 Королевский Аметист", "🌌 Royal Amethyst", true, Color(0xFF16121E), Color(0xFF231D30), Color(0xFF35284D), Color(0xFFF59E0B), Color.Black, Color(0xFFFAF5FF), Color(0xFFB8A9C9)),
+    DARK_OCEAN("dark_ocean", "🌊 Полночный Сапфир", "🌊 Midnight Sapphire", true, Color(0xFF0E141D), Color(0xFF172130), Color(0xFF1E324A), Color(0xFF38BDF8), Color(0xFF082F49), Color(0xFFF1F5F9), Color(0xFF94A3B8)),
+    DARK_RUBY("dark_ruby", "🍷 Бархатный Рубин", "🍷 Velvet Ruby", true, Color(0xFF141115), Color(0xFF211B22), Color(0xFF381E28), Color(0xFFF43F5E), Color.White, Color(0xFFF8FAFC), Color(0xFFA89FA8)),
+    DARK_MOCHA("dark_mocha", "☕ Кофейный Кварц", "☕ Espresso & Caramel", true, Color(0xFF141210), Color(0xFF211D1A), Color(0xFF332922), Color(0xFFE5A967), Color(0xFF1C130A), Color(0xFFF5F0EB), Color(0xFFA89F96)),
+    LIGHT_NORDIC("light_nordic", "☀️ Нордический Лёд", "☀️ Nordic Ice", false, Color(0xFFE2E8F0), Color(0xFFF8FAFC), Color(0xFFDBEAFE), Color(0xFF0284C7), Color.White, Color(0xFF1E293B), Color(0xFF64748B)),
+    LIGHT_LATTE("light_latte", "🌅 Песочный Кашемир", "🌅 Warm Cashmere", false, Color(0xFFEAE3DC), Color(0xFFFAF7F2), Color(0xFFF5E6D3), Color(0xFFC25E00), Color.White, Color(0xFF292524), Color(0xFF78716C)),
+    LIGHT_MINT("light_mint", "🌿 Шалфей и Эвкалипт", "🌿 Sage & Eucalyptus", false, Color(0xFFDCE7E1), Color(0xFFF4F9F6), Color(0xFFCBE3D6), Color(0xFF0D9488), Color.White, Color(0xFF1E2925), Color(0xFF5C7067)),
+    LIGHT_SAKURA("light_sakura", "🌸 Пудровый Кварц", "🌸 Rose Quartz", false, Color(0xFFEAE0E3), Color(0xFFFAF5F6), Color(0xFFF2D9E0), Color(0xFFBE185D), Color.White, Color(0xFF2D1E24), Color(0xFF7A636C)),
+    LIGHT_LAVENDER("light_lavender", "💎 Туманный Ирис", "💎 Misty Iris", false, Color(0xFFE2E0EC), Color(0xFFF7F6FB), Color(0xFFDDD6FE), Color(0xFF6D28D9), Color.White, Color(0xFF221E30), Color(0xFF6B6680));
 
     companion object {
         fun fromId(id: String?): AppThemePalette = entries.find { it.id == id } ?: DARK_EMERALD
@@ -219,31 +227,31 @@ val RuStrings = Strings(
     searchHint = "Поиск...",
     prevChannel = "Пред. канал",
     fullscreen = "На весь экран",
-    noChannels = "Плейлист не выбран или пуст",
-    goToSettings = "Перейти в Настройки",
-    loading = "Загрузка данных...",
-    reconnecting = "Поток прервался, переподключаемся...",
-    catSourcesGroup = "📡 Источники и Контент (Плейлисты, EPG, Порталы, QR)",
-    catAppearance = "🎨 Внешний вид, Темы и Язык",
-    catPlayer = "⚙️ Выбор плеера, Архив, Часы и Управление",
-    catPlaylists = "📺 Плейлисты (M3U / M3U8)",
-    catEpg = "📅 Телепрограмма (EPG)",
-    catPortals = "🎬 Порталы (VPortal и Stalker)",
-    catQr = "📱 QR-Пульт (Ввод с телефона)",
-    catBackup = "💾 Импорт и Экспорт настроек",
-    catChangelog = "📜 Список изменений (Changelog)",
-    catLicense = "⚖️ Лицензия и Условия",
+    noChannels = "Плейлист пуст или не выбран",
+    goToSettings = "Открыть Настройки",
+    loading = "Загрузка...",
+    reconnecting = "Переподключение...",
+    catSourcesGroup = "📡 Источники",
+    catAppearance = "🎨 Тема и Язык",
+    catPlayer = "🎬 Видеоплеер",
+    catPlaylists = "📺 Плейлисты",
+    catEpg = "📅 Телепрограмма",
+    catPortals = "🎬 Порталы VOD",
+    catQr = "📱 QR-загрузка",
+    catBackup = "💾 Резервная копия",
+    catChangelog = "📜 Что нового",
+    catLicense = "⚖️ Лицензия",
     catPrivacy = "🔒 Конфиденциальность",
-    catReportIssue = "🐞 Сообщить о проблеме",
-    activePlaylistLabel = "Активный плейлист:",
-    activeEpgLabel = "Активный источник EPG:",
-    epgFromPlaylistOption = "🔄 Автоматически (из плейлиста / TVLider)",
-    usePlaylistEpgSwitch = "Брать телепрограмму (EPG) автоматически",
-    addSourceName = "Название (например: TVLider Основной)",
+    catReportIssue = "🐞 Поддержка",
+    activePlaylistLabel = "Текущий плейлист:",
+    activeEpgLabel = "Источник EPG:",
+    epgFromPlaylistOption = "🔄 Авто",
+    usePlaylistEpgSwitch = "Автозагрузка EPG",
+    addSourceName = "Название",
     addSourceUrl = "Ссылка (http://...)",
-    addBtn = "➕ Добавить в список",
-    saveAndReloadBtn = "🔄 Сохранить и перезагрузить источники",
-    copyLogBtn = "📋 Скопировать диагностику VPortal"
+    addBtn = "➕ Добавить",
+    saveAndReloadBtn = "💾 Сохранить и загрузить",
+    copyLogBtn = "📋 Копировать лог"
 )
 
 val EnStrings = Strings(
@@ -256,31 +264,31 @@ val EnStrings = Strings(
     searchHint = "Search...",
     prevChannel = "Recall",
     fullscreen = "Fullscreen",
-    noChannels = "No playlist selected or empty",
+    noChannels = "No playlist loaded",
     goToSettings = "Open Settings",
-    loading = "Loading data...",
-    reconnecting = "Stream dropped, reconnecting...",
-    catSourcesGroup = "📡 Sources & Content (Playlists, EPG, Portals, QR)",
-    catAppearance = "🎨 Appearance, Themes & Language",
-    catPlayer = "⚙️ Player Engine, Archive, Clock & Controls",
-    catPlaylists = "📺 Playlists (M3U / M3U8)",
-    catEpg = "📅 TV Guide (EPG)",
-    catPortals = "🎬 Portals (VPortal & Stalker)",
-    catQr = "📱 QR Remote Loader",
-    catBackup = "💾 Backup (Import & Export)",
-    catChangelog = "📜 Changelog (What's New)",
-    catLicense = "⚖️ License & Terms",
-    catPrivacy = "🔒 Privacy Policy",
-    catReportIssue = "🐞 Report an Issue",
-    activePlaylistLabel = "Active Playlist:",
-    activeEpgLabel = "Active EPG Source:",
-    epgFromPlaylistOption = "🔄 Auto (from Playlist / Default)",
-    usePlaylistEpgSwitch = "Load EPG automatically",
-    addSourceName = "Name (e.g. Main TV)",
+    loading = "Loading...",
+    reconnecting = "Reconnecting...",
+    catSourcesGroup = "📡 Sources",
+    catAppearance = "🎨 Theme & Language",
+    catPlayer = "🎬 Video Player",
+    catPlaylists = "📺 Playlists",
+    catEpg = "📅 TV Guide",
+    catPortals = "🎬 VOD Portals",
+    catQr = "📱 QR Loader",
+    catBackup = "💾 Backup",
+    catChangelog = "📜 Changelog",
+    catLicense = "⚖️ License",
+    catPrivacy = "🔒 Privacy",
+    catReportIssue = "🐞 Support",
+    activePlaylistLabel = "Active playlist:",
+    activeEpgLabel = "EPG source:",
+    epgFromPlaylistOption = "🔄 Auto",
+    usePlaylistEpgSwitch = "Auto-load EPG",
+    addSourceName = "Name",
     addSourceUrl = "URL (http://...)",
-    addBtn = "➕ Add to list",
-    saveAndReloadBtn = "🔄 Save & Reload All",
-    copyLogBtn = "📋 Copy VPortal Diagnostic Log"
+    addBtn = "➕ Add",
+    saveAndReloadBtn = "💾 Save & Load",
+    copyLogBtn = "📋 Copy log"
 )
 
 fun maskSensitiveKeys(text: String): String {
