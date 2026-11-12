@@ -154,8 +154,10 @@ fun AccordionSettingsScreen(
     theme: AppThemePalette,
     deviceType: String,
     controlMode: String,
+    clockPosition: Int,
     onDeviceTypeChange: (String) -> Unit,
     onControlModeChange: (String) -> Unit,
+    onClockPositionChange: (Int) -> Unit,
     onSelectTheme: (AppThemePalette) -> Unit,
     onToggleLanguage: () -> Unit,
     playerResizeMode: Int,
@@ -235,7 +237,7 @@ fun AccordionSettingsScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // 1. ИСТОЧНИКИ И КОНТЕНТ (Плейлисты, EPG, Порталы и QR в одном выпадающем списке)
+        // 1. ИСТОЧНИКИ И КОНТЕНТ
         ExpandableSectionRow(S.catSourcesGroup, expandedRow == 0, theme, { toggleRow(0) }) {
             val subOpts = listOf(
                 "playlists" to "${S.catPlaylists} (${playlists.size})",
@@ -244,13 +246,7 @@ fun AccordionSettingsScreen(
                 "qr" to S.catQr
             )
             val curSubTitle = subOpts.find { it.first == selectedSourceSubMenu }?.second ?: subOpts.first().second
-            SourceDropdownSelector(
-                label = if (S.isRu) "Выберите раздел источников:" else "Select Source Section:",
-                selectedTitle = curSubTitle,
-                options = subOpts,
-                theme = theme,
-                onSelect = { selectedSourceSubMenu = it }
-            )
+            SourceDropdownSelector(if (S.isRu) "Выберите раздел источников:" else "Select Source Section:", curSubTitle, subOpts, theme) { selectedSourceSubMenu = it }
             HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 4.dp))
 
             when (selectedSourceSubMenu) {
@@ -336,12 +332,26 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 2. ПЛЕЕР, УСТРОЙСТВО И УПРАВЛЕНИЕ
+        // 2. ПЛЕЕР, ЧАСЫ, УСТРОЙСТВО И УПРАВЛЕНИЕ
         ExpandableSectionRow(S.catPlayer, expandedRow == 1, theme, { toggleRow(1) }) {
             Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(if (S.isRu) "Открывать канал сразу на полный экран при выборе" else "Open channel in fullscreen on tap", fontWeight = FontWeight.Bold, color = theme.text, modifier = Modifier.weight(1f))
                 Switch(checked = openFullscreenOnTap, onCheckedChange = onAutoFsChange)
             }
+
+            val clockOpts = listOf(
+                "0" to (if (S.isRu) "🚫 Выключены" else "🚫 Off"),
+                "1" to (if (S.isRu) "↖️ В левом верхнем углу экрана" else "↖️ Top-Left Corner"),
+                "2" to (if (S.isRu) "↗️ В правом верхнем углу экрана" else "↗️ Top-Right Corner")
+            )
+            SourceDropdownSelector(
+                label = if (S.isRu) "🕒 Часы реального времени на экране:" else "🕒 Real-Time Screen Clock:",
+                selectedTitle = clockOpts.find { it.first == clockPosition.toString() }?.second ?: clockOpts.first().second,
+                options = clockOpts,
+                theme = theme,
+                onSelect = { onClockPositionChange(it.toIntOrNull() ?: 0) }
+            )
+
             val devOpts = listOf(
                 "mobile" to (if (S.isRu) "📱 Смартфон / Планшет (кнопки Каналов и Архива в плеере)" else "📱 Smartphone / Tablet"),
                 "tv" to (if (S.isRu) "📺 Телевизор / ТВ-приставка (без лишних кнопок на экране)" else "📺 Android TV / TV Box")
@@ -495,7 +505,7 @@ fun AccordionSettingsScreen(
             OutlinedTextField(value = issueDescription, onValueChange = { issueDescription = it }, label = { Text(if (S.isRu) "Опишите проблему..." else "Describe the issue...") }, modifier = Modifier.fillMaxWidth())
             Button(
                 onClick = {
-                    val reportText = "=== CCTV Plus Report ===\nVer: v$installedVerName (#$installedVerCode)\nDevice: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})\nMode: $deviceType/$controlMode | Theme: ${theme.id}\nEPG: $epgStatusText\nVPortal: ${maskSensitiveKeys(vportalDiagnostic)}\nComment: $issueDescription"
+                    val reportText = "=== CCTV Plus Report ===\nVer: v$installedVerName (#$installedVerCode)\nDevice: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})\nMode: $deviceType/$controlMode | Clock: $clockPosition | Theme: ${theme.id}\nEPG: $epgStatusText\nVPortal: ${maskSensitiveKeys(vportalDiagnostic)}\nComment: $issueDescription"
                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cm.setPrimaryClip(ClipData.newPlainText("CCTVBugReport", reportText))
                     reportStatus = if (S.isRu) "✅ Отчет скопирован в буфер!" else "✅ Report copied!"
