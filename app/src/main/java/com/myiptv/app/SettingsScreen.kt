@@ -53,8 +53,17 @@ fun SourceDropdownSelector(
     selectedTitle: String,
     options: List<Pair<String, String>>,
     theme: AppThemePalette,
+    onSelect: (String) -> Unit
+) = SourceDropdownSelector(label, selectedTitle, options, theme, onSelect, Modifier)
+
+@Composable
+fun SourceDropdownSelector(
+    label: String,
+    selectedTitle: String,
+    options: List<Pair<String, String>>,
+    theme: AppThemePalette,
     onSelect: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier = modifier) {
