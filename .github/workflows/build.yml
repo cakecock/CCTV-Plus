@@ -5,6 +5,9 @@ on:
     branches: [ "main", "master" ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,8 +22,33 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Prepare Root Gradle Configs
+      - name: Setup Permanent Digital Signature (Keystore)
         run: |
+          mkdir -p ~/.android
+          if [ ! -f cctv_permanent.keystore ]; then
+            keytool -genkeypair -v -keystore cctv_permanent.keystore \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add cctv_permanent.keystore
+            git commit -m "Add permanent digital signature" || true
+            git push || true
+          fi
+          cp cctv_permanent.keystore ~/.android/debug.keystore
+
+      - name: Prepare Root Gradle Configs and FileProvider XML
+        run: |
+          mkdir -p app/src/main/res/xml
+          cat << 'EOF' > app/src/main/res/xml/file_paths.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <paths>
+              <external-files-path name="updates" path="." />
+              <cache-path name="cache_updates" path="." />
+          </paths>
+          EOF
+
           cat << 'EOF' > settings.gradle.kts
           pluginManagement {
               repositories {
@@ -58,11 +86,19 @@ jobs:
         with:
           gradle-version: '8.7'
 
-      - name: Build Debug APK
+      - name: Build APK
         run: gradle assembleDebug --no-daemon
 
-      - name: Upload Ready APK
+      - name: Upload Ready APK to Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: MyIPTV-APK
+          name: CCTV-Plus-APK
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Publish Release for In-App Auto-Update
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.${{ github.run_number }}
+          name: "CCTV Plus v1.${{ github.run_number }}"
+          body: "Автоматическая сборка обновления #${{ github.run_number }}"
+          files: app/build/outputs/apk/debug/app-debug.apk
