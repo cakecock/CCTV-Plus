@@ -7,9 +7,13 @@ package com.myiptv.app
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.media.AudioManager
+import android.net.Uri
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.MediaController
+import android.widget.VideoView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,6 +21,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -56,10 +61,108 @@ data class AudioTrackOption(
     val isSelected: Boolean
 )
 
-// ================= ВИДЕОПЛЕЕР С ЖЕСТАМИ ЯРКОСТИ/ГРОМКОСТИ И ВЫБОРОМ ОЗВУЧКИ =================
+fun launchExternalVideoPlayer(context: Context, streamUrl: String, title: String) {
+    if (streamUrl.isBlank()) return
+    runCatching {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(Uri.parse(streamUrl), "video/*")
+            putExtra("title", title)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(Intent.createChooser(intent, title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+}
 
 @Composable
 fun SmartVideoPlayer(
+    streamUrl: String,
+    userAgent: String?,
+    resizeMode: Int,
+    bufferMode: Int,
+    useNativeController: Boolean,
+    reconnectingText: String,
+    modifier: Modifier = Modifier,
+    playerEngine: Int = 0, // 0 = ExoPlayer, 1 = Системный VideoView
+    isMuted: Boolean = false,
+    enableSwipeGestures: Boolean = false,
+    showAudioSelectorDialog: Boolean = false,
+    onDismissAudioSelector: () -> Unit = {}
+) {
+    if (playerEngine == 1) {
+        NativeAndroidVideoPlayer(
+            streamUrl = streamUrl,
+            useNativeController = useNativeController,
+            isMuted = isMuted,
+            reconnectingText = reconnectingText,
+            modifier = modifier
+        )
+    } else {
+        ExoVideoPlayer(
+            streamUrl = streamUrl,
+            userAgent = userAgent,
+            resizeMode = resizeMode,
+            bufferMode = bufferMode,
+            useNativeController = useNativeController,
+            reconnectingText = reconnectingText,
+            modifier = modifier,
+            isMuted = isMuted,
+            enableSwipeGestures = enableSwipeGestures,
+            showAudioSelectorDialog = showAudioSelectorDialog,
+            onDismissAudioSelector = onDismissAudioSelector
+        )
+    }
+}
+
+@Composable
+fun NativeAndroidVideoPlayer(
+    streamUrl: String,
+    useNativeController: Boolean,
+    isMuted: Boolean,
+    reconnectingText: String,
+    modifier: Modifier = Modifier
+) {
+    var hasError by remember(streamUrl) { mutableStateOf(false) }
+
+    Box(modifier = modifier.background(Color.Black)) {
+        AndroidView(
+            factory = { ctx ->
+                VideoView(ctx).apply {
+                    layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    if (useNativeController) {
+                        val mc = MediaController(ctx)
+                        mc.setAnchorView(this)
+                        setMediaController(mc)
+                    }
+                }
+            },
+            update = { view ->
+                if (streamUrl.isNotBlank() && view.tag != streamUrl) {
+                    view.tag = streamUrl
+                    hasError = false
+                    view.setOnPreparedListener { mp ->
+                        val vol = if (isMuted) 0f else 1f
+                        mp.setVolume(vol, vol)
+                        mp.start()
+                    }
+                    view.setOnErrorListener { _, _, _ ->
+                        hasError = true
+                        true
+                    }
+                    view.setVideoURI(Uri.parse(streamUrl))
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+        if (hasError) {
+            Box(modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp).background(Color(0xCC000000), RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Text(reconnectingText, color = Color(0xFFF59E0B), fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun ExoVideoPlayer(
     streamUrl: String,
     userAgent: String?,
     resizeMode: Int,
@@ -240,9 +343,7 @@ fun SmartVideoPlayer(
         )
 
         if (gestureHudText.isNotEmpty()) {
-            Box(
-                modifier = Modifier.align(Alignment.Center).background(Color(0xDD000000), RoundedCornerShape(14.dp)).padding(horizontal = 20.dp, vertical = 12.dp)
-            ) {
+            Box(modifier = Modifier.align(Alignment.Center).background(Color(0xDD000000), RoundedCornerShape(14.dp)).padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text(gestureHudText, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
             }
         }
@@ -254,8 +355,6 @@ fun SmartVideoPlayer(
         }
     }
 }
-
-// ================= ПРОЗРАЧНЫЙ 3-КОЛОНОЧНЫЙ ТВ-ГИД ПОВЕРХ ВИДЕО (TIVIMATE СТИЛЬ) =================
 
 @Composable
 fun TiviMateTvOverlay(
@@ -279,27 +378,27 @@ fun TiviMateTvOverlay(
         previewChannel?.let { findChannelSchedule(it, epgScheduleMap) } ?: emptyList()
     }
     val now = System.currentTimeMillis()
+    val epgListState = rememberLazyListState()
+
+    LaunchedEffect(previewChannel, previewSchedule) {
+        val liveIdx = previewSchedule.indexOfFirst { now in it.startMs..it.stopMs }
+        if (liveIdx > 0) epgListState.scrollToItem((liveIdx - 1).coerceAtLeast(0))
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Color(0xBB090B0E)).padding(14.dp)) {
         Row(modifier = Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            // Колонка 1: Категории
             Column(modifier = Modifier.weight(0.85f).fillMaxHeight().clip(RoundedCornerShape(12.dp)).background(Color(0xDD141820)).padding(8.dp)) {
                 Text(if (S.isRu) "1. Категории" else "1. Categories", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, modifier = Modifier.padding(6.dp))
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(groups) { grp ->
                         val isSel = grp == selGroup
-                        Box(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                                .background(if (isSel) theme.primary else Color.Transparent)
-                                .clickable { selGroup = grp }.padding(horizontal = 10.dp, vertical = 8.dp)
-                        ) {
+                        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (isSel) theme.primary else Color.Transparent).clickable { selGroup = grp }.padding(horizontal = 10.dp, vertical = 8.dp)) {
                             Text(grp, color = if (isSel) theme.onPrimary else Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
                         }
                     }
                 }
             }
 
-            // Колонка 2: Каналы категории
             Column(modifier = Modifier.weight(1.15f).fillMaxHeight().clip(RoundedCornerShape(12.dp)).background(Color(0xDD141820)).padding(8.dp)) {
                 Text(if (S.isRu) "2. Каналы (${groupChannels.size})" else "2. Channels", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, modifier = Modifier.padding(6.dp))
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -309,9 +408,7 @@ fun TiviMateTvOverlay(
                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
                                 .background(if (isPreview) theme.selectedCard else Color(0x55000000))
                                 .border(if (isPreview) 1.5.dp else 0.dp, if (isPreview) theme.primary else Color.Transparent, RoundedCornerShape(8.dp))
-                                .clickable {
-                                    if (isPreview) { onSelectChannel(ch); onClose() } else previewChannel = ch
-                                }
+                                .clickable { if (isPreview) { onSelectChannel(ch); onClose() } else previewChannel = ch }
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -322,7 +419,6 @@ fun TiviMateTvOverlay(
                 }
             }
 
-            // Колонка 3: Программа и Архив выбранного канала
             Column(modifier = Modifier.weight(1.3f).fillMaxHeight().clip(RoundedCornerShape(12.dp)).background(Color(0xDD141820)).padding(8.dp)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("3. ${previewChannel?.name ?: "Гид"}", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, maxLines = 1, modifier = Modifier.weight(1f))
@@ -335,7 +431,7 @@ fun TiviMateTvOverlay(
                         }
                     }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    LazyColumn(state = epgListState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(previewSchedule) { prog ->
                             val isPast = prog.stopMs < now
                             val isNow = now in prog.startMs..prog.stopMs
@@ -365,8 +461,6 @@ fun TiviMateTvOverlay(
     }
 }
 
-// ================= МУЛЬТИЭКРАН (MULTI-VIEW НА 2 ИЛИ 4 КАНАЛА ОДНОВРЕМЕННО) =================
-
 @Composable
 fun MultiViewScreenOverlay(
     S: Strings,
@@ -388,16 +482,12 @@ fun MultiViewScreenOverlay(
 
     if (pickingSlotIndex != null) {
         QuickChannelPickerDialog(
-            S = S,
-            theme = theme,
-            channels = allChannels,
-            currentChannel = slots[pickingSlotIndex!!],
+            S = S, theme = theme, channels = allChannels, currentChannel = slots[pickingSlotIndex!!],
             onDismiss = { pickingSlotIndex = null },
             onSelect = { chosen ->
                 val mutable = slots.toMutableList()
                 mutable[pickingSlotIndex!!] = chosen
-                slots = mutable
-                pickingSlotIndex = null
+                slots = mutable; pickingSlotIndex = null
             }
         )
     }
@@ -413,10 +503,9 @@ fun MultiViewScreenOverlay(
                     Box(
                         modifier = Modifier.weight(1f).fillMaxHeight()
                             .border(if (isAudioActive) 3.dp else 1.dp, if (isAudioActive) theme.primary else Color.DarkGray, RoundedCornerShape(8.dp))
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { activeAudioSlot = slotIdx }
+                            .clip(RoundedCornerShape(8.dp)).clickable { activeAudioSlot = slotIdx }
                     ) {
-                        SmartVideoPlayer(
+                        ExoVideoPlayer(
                             streamUrl = ch.streamUrl,
                             userAgent = ch.userAgent ?: playerDefaultUa,
                             resizeMode = 0,
@@ -432,20 +521,8 @@ fun MultiViewScreenOverlay(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(if (isAudioActive) "🔊 ${ch.name}" else "🔇 ${ch.name}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.widthIn(max = 110.dp))
-                            Text(
-                                text = if (S.isRu) "🔄 Канал" else "🔄 Change",
-                                color = theme.primary,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.clickable { pickingSlotIndex = slotIdx }
-                            )
-                            Text(
-                                text = "⛶",
-                                color = Color(0xFFF59E0B),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.clickable { onExitMultiView(ch) }
-                            )
+                            Text(if (S.isRu) "🔄 Канал" else "🔄 Change", color = theme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { pickingSlotIndex = slotIdx })
+                            Text("⛶", color = Color(0xFFF59E0B), fontSize = 13.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onExitMultiView(ch) })
                         }
                     }
                 }
@@ -453,8 +530,6 @@ fun MultiViewScreenOverlay(
         }
     }
 }
-
-// ================= ОКНО ВВОДА PIN-КОДА РОДИТЕЛЬСКОГО КОНТРОЛЯ (18+) =================
 
 @Composable
 fun ParentalPinDialog(
