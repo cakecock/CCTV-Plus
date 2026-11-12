@@ -56,6 +56,9 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private const val FAV_GROUP_TAG = "__FAV_CATEGORY__"
 
@@ -100,10 +103,16 @@ class MainActivity : ComponentActivity() {
 
             var epgMap by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
             var detectedPlaylistEpgUrl by remember { mutableStateOf<String?>(null) }
+            var isEpgLoading by remember { mutableStateOf(false) }
+            var epgStatusText by remember {
+                mutableStateOf(if (isRu) "Ожидание загрузки EPG..." else "Waiting for EPG load...")
+            }
+
             var favoriteIds by remember {
                 mutableStateOf(prefs.getStringSet("favs", emptySet())?.toSet() ?: emptySet())
             }
 
+            // 3 главные вкладки сверху: 0 = Телеканалы, 1 = Кинозал, 2 = Настройки
             var currentTab by remember { mutableStateOf(0) }
             var isLoading by remember { mutableStateOf(false) }
             var vportalDiagnostic by remember { mutableStateOf("") }
@@ -126,6 +135,52 @@ class MainActivity : ComponentActivity() {
                     .putString("stalker_url", stalkerUrl.trim())
                     .putString("stalker_mac", stalkerMac.trim())
                     .apply()
+            }
+
+            fun loadEpgWithStatus(embeddedEpgOverride: String? = detectedPlaylistEpgUrl) {
+                val epgUrlToLoad = when {
+                    usePlaylistEpg && !embeddedEpgOverride.isNullOrBlank() -> embeddedEpgOverride
+                    selectedEpgId == "AUTO_PLAYLIST" && !embeddedEpgOverride.isNullOrBlank() -> embeddedEpgOverride
+                    else -> epgSources.find { it.id == selectedEpgId }?.url ?: epgSources.firstOrNull()?.url
+                }
+
+                if (epgUrlToLoad.isNullOrBlank()) {
+                    isEpgLoading = false
+                    epgStatusText = if (isRu) {
+                        "⚠️ Ссылка на EPG не указана (и не найдена внутри плейлиста)"
+                    } else {
+                        "⚠️ No EPG URL configured or found in playlist"
+                    }
+                    return
+                }
+
+                scope.launch {
+                    isEpgLoading = true
+                    epgStatusText = if (isRu) {
+                        "⏳ Загрузка и разбор телепрограммы...\nИсточник: $epgUrlToLoad"
+                    } else {
+                        "⏳ Downloading & parsing EPG...\nSource: $epgUrlToLoad"
+                    }
+
+                    val loadedEpg = NetworkLoader.loadEpgCurrentPrograms(epgUrlToLoad.trim())
+                    epgMap = loadedEpg
+                    isEpgLoading = false
+
+                    val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                    epgStatusText = if (loadedEpg.isNotEmpty()) {
+                        if (isRu) {
+                            "✅ Обновлено в $timeStr: загружены передачи для ${loadedEpg.size} каналов"
+                        } else {
+                            "✅ Updated at $timeStr: loaded guide for ${loadedEpg.size} channels"
+                        }
+                    } else {
+                        if (isRu) {
+                            "⚠️ Загрузка завершена ($timeStr), но текущих передач не найдено. Проверьте ссылку EPG."
+                        } else {
+                            "⚠️ Finished ($timeStr), but no active programs found. Check EPG URL."
+                        }
+                    }
+                }
             }
 
             fun reloadAllData() {
@@ -165,15 +220,7 @@ class MainActivity : ComponentActivity() {
                     }
                     isLoading = false
 
-                    val epgUrlToLoad = when {
-                        usePlaylistEpg && !embeddedEpg.isNullOrBlank() -> embeddedEpg
-                        selectedEpgId == "AUTO_PLAYLIST" && !embeddedEpg.isNullOrBlank() -> embeddedEpg
-                        else -> epgSources.find { it.id == selectedEpgId }?.url ?: epgSources.firstOrNull()?.url
-                    }
-
-                    if (!epgUrlToLoad.isNullOrBlank()) {
-                        epgMap = NetworkLoader.loadEpgCurrentPrograms(epgUrlToLoad.trim())
-                    }
+                    loadEpgWithStatus(embeddedEpg)
                 }
             }
 
@@ -297,7 +344,7 @@ class MainActivity : ComponentActivity() {
                                 .putString("lang", if (selectedRu) "ru" else "en")
                                 .apply()
                             isFirstLaunch = false
-                            currentTab = 3
+                            currentTab = 2
                         }
                     } else if (isFullscreen && (currentChannel != null || currentVodStream != null)) {
                         BackHandler { isFullscreen = false }
@@ -327,6 +374,7 @@ class MainActivity : ComponentActivity() {
                         }
                     } else {
                         Column(modifier = Modifier.fillMaxSize()) {
+                            // Верхняя панель: только 3 вкладки (Телеканалы, Кинозал, Настройки)
                             NavigationBar(containerColor = themePalette.card, modifier = Modifier.height(64.dp)) {
                                 NavigationBarItem(
                                     selected = currentTab == 0,
@@ -342,13 +390,7 @@ class MainActivity : ComponentActivity() {
                                 )
                                 NavigationBarItem(
                                     selected = currentTab == 2,
-                                    onClick = { currentTab = 2; currentVodStream = null },
-                                    icon = { Icon(Icons.Default.Star, contentDescription = null) },
-                                    label = { Text(S.favorites) }
-                                )
-                                NavigationBarItem(
-                                    selected = currentTab == 3,
-                                    onClick = { currentTab = 3 },
+                                    onClick = { currentTab = 2 },
                                     icon = { Icon(Icons.Default.Settings, contentDescription = null) },
                                     label = { Text(S.settings) }
                                 )
@@ -359,7 +401,7 @@ class MainActivity : ComponentActivity() {
                             }
 
                             when (currentTab) {
-                                0, 2 -> LiveTvScreen(
+                                0 -> LiveTvScreen(
                                     S = S,
                                     theme = themePalette,
                                     playlists = playlists,
@@ -368,7 +410,7 @@ class MainActivity : ComponentActivity() {
                                         selectedPlaylistId = newId
                                         reloadAllData()
                                     },
-                                    channels = if (currentTab == 2) channels.filter { favoriteIds.contains(it.id) } else channels,
+                                    channels = channels,
                                     epgMap = epgMap,
                                     favoriteIds = favoriteIds,
                                     currentChannel = currentChannel,
@@ -387,7 +429,7 @@ class MainActivity : ComponentActivity() {
                                         prefs.edit().putStringSet("favs", next).apply()
                                     },
                                     onFullscreen = { isFullscreen = true },
-                                    onOpenSettings = { currentTab = 3 }
+                                    onOpenSettings = { currentTab = 2 }
                                 )
 
                                 1 -> VodScreen(
@@ -400,10 +442,10 @@ class MainActivity : ComponentActivity() {
                                     onBackFolder = { goBackInVod() },
                                     onClickItem = { item -> openVodNode(item) },
                                     onServerSearch = { q -> searchInVPortal(q) },
-                                    onOpenSettings = { currentTab = 3 }
+                                    onOpenSettings = { currentTab = 2 }
                                 )
 
-                                3 -> AccordionSettingsScreen(
+                                2 -> AccordionSettingsScreen(
                                     S = S,
                                     theme = themePalette,
                                     onSelectTheme = { newTheme ->
@@ -435,19 +477,28 @@ class MainActivity : ComponentActivity() {
                                     selectedEpgId = selectedEpgId,
                                     usePlaylistEpg = usePlaylistEpg,
                                     detectedPlaylistEpgUrl = detectedPlaylistEpgUrl,
+                                    isEpgLoading = isEpgLoading,
+                                    epgStatusText = epgStatusText,
+                                    onRefreshEpgNow = {
+                                        persistLists()
+                                        loadEpgWithStatus()
+                                    },
                                     onToggleUsePlaylistEpg = { enabled ->
                                         usePlaylistEpg = enabled
-                                        reloadAllData()
+                                        persistLists()
+                                        loadEpgWithStatus()
                                     },
                                     onSelectEpg = { id ->
                                         selectedEpgId = id
-                                        reloadAllData()
+                                        persistLists()
+                                        loadEpgWithStatus()
                                     },
                                     onAddEpg = { name, url ->
                                         val newId = "epg_${System.currentTimeMillis()}"
                                         epgSources = epgSources + NamedSource(newId, name, url)
                                         selectedEpgId = newId
-                                        reloadAllData()
+                                        persistLists()
+                                        loadEpgWithStatus()
                                     },
                                     onDeleteEpg = { id ->
                                         epgSources = epgSources.filterNot { it.id == id }
@@ -652,7 +703,7 @@ fun LiveTvScreen(
             channels.count { favoriteIds.contains(it.id) }
         }
 
-        // Если есть хотя бы 1 избранный канал — добавляем категорию "⭐ Избранное" сразу после "Все категории"
+        // Категория "⭐ Избранное" находится прямо внутри полоски категорий плейлиста!
         val groups = remember(channels, favChannelsCount, S) {
             val baseList = mutableListOf(S.allGroups)
             if (favChannelsCount > 0) {
@@ -665,7 +716,6 @@ fun LiveTvScreen(
         var selectedGroup by remember { mutableStateOf(S.allGroups) }
         var searchQuery by remember { mutableStateOf("") }
 
-        // Если пользователь убрал последний канал из избранного, возвращаем фильтр на "Все категории"
         LaunchedEffect(favChannelsCount) {
             if (favChannelsCount == 0 && selectedGroup == FAV_GROUP_TAG) {
                 selectedGroup = S.allGroups
@@ -1000,6 +1050,9 @@ fun AccordionSettingsScreen(
     selectedEpgId: String,
     usePlaylistEpg: Boolean,
     detectedPlaylistEpgUrl: String?,
+    isEpgLoading: Boolean,
+    epgStatusText: String,
+    onRefreshEpgNow: () -> Unit,
     onToggleUsePlaylistEpg: (Boolean) -> Unit,
     onSelectEpg: (String) -> Unit,
     onAddEpg: (String, String) -> Unit,
@@ -1129,12 +1182,54 @@ fun AccordionSettingsScreen(
             }
         }
 
+        // СТРОЧКА 2: ТЕЛЕПРОГРАММА EPG + ПОЛОСКА ЗАГРУЗКИ И СТАТУС
         ExpandableSectionRow(
             title = S.catEpg,
             isExpanded = expandedRow == 2,
             theme = theme,
             onToggle = { toggleRow(2) }
         ) {
+            // Блок отслеживания загрузки и состояния EPG
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(theme.bg)
+                    .border(1.dp, theme.primary.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = if (S.isRu) "Состояние телепрограммы (EPG):" else "EPG Status:",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = theme.primary
+                )
+                if (isEpgLoading) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                        color = theme.primary
+                    )
+                }
+                Text(
+                    text = epgStatusText,
+                    fontSize = 13.sp,
+                    color = theme.text
+                )
+                Button(
+                    onClick = onRefreshEpgNow,
+                    enabled = !isEpgLoading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (S.isRu) "🔄 Обновить телепрограмму сейчас" else "🔄 Refresh EPG Now",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -1143,7 +1238,7 @@ fun AccordionSettingsScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(S.usePlaylistEpgSwitch, fontWeight = FontWeight.Bold, color = theme.text)
                     if (!detectedPlaylistEpgUrl.isNullOrBlank()) {
-                        Text("EPG: $detectedPlaylistEpgUrl", fontSize = 12.sp, color = theme.primary)
+                        Text("EPG в плейлисте: $detectedPlaylistEpgUrl", fontSize = 12.sp, color = theme.primary)
                     }
                 }
                 Switch(checked = usePlaylistEpg, onCheckedChange = onToggleUsePlaylistEpg)
