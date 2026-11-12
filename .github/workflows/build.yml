@@ -258,29 +258,31 @@ jobs:
       - name: Build Signed Release APK
         run: |
           gradle assembleRelease --no-daemon
-          cp app/build/outputs/apk/release/app-release.apk CCTV-Plus.apk
-
-      - name: Save APK and Version Directly to Repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main || git pull --rebase origin master || true
-          echo '{"tag_name":"v1.${{ github.run_number }}","repo":"${{ github.repository }}"}' > version.json
-          git add CCTV-Plus.apk version.json cctv_permanent.keystore
-          git commit -m "Publish CCTV-Plus.apk v1.${{ github.run_number }} [skip ci]" || true
-          git push || true
+          cp app/build/outputs/apk/release/app-release.apk /tmp/CCTV-Plus.apk
 
       - name: Upload Ready APK to Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: CCTV-Plus-APK
-          path: CCTV-Plus.apk
+          path: /tmp/CCTV-Plus.apk
 
       - name: Publish Release for In-App Auto-Update
-        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v1.${{ github.run_number }}
           name: "CCTV Plus v1.${{ github.run_number }}"
           body: "Автоматическая сборка обновления #${{ github.run_number }}"
-          files: CCTV-Plus.apk
+          make_latest: true
+          files: /tmp/CCTV-Plus.apk
+
+      - name: Save APK and Version Directly to Repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -- .
+          git pull --rebase origin main || git pull --rebase origin master || true
+          cp /tmp/CCTV-Plus.apk ./CCTV-Plus.apk
+          printf '{"tag_name":"v1.%s","version_code":%s,"repo":"%s"}\n' "${{ github.run_number }}" "${{ github.run_number }}" "${{ github.repository }}" > version.json
+          git add -f CCTV-Plus.apk version.json
+          git commit -m "Publish CCTV-Plus.apk v1.${{ github.run_number }} [skip ci]" || true
+          git push || true
