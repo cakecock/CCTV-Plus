@@ -35,6 +35,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 
+val BuiltInEpgPresets = listOf(
+    "AUTO_PLAYLIST" to "🔄 Авто (Из плейлиста + TVLider + IPTVx)",
+    "BUILTIN_TVLIDER" to "📡 Встроенный 1: TVLider / Edem (epg.it999.ru)",
+    "BUILTIN_IPTVX_LITE" to "⚡ Встроенный 2: IPTVx.one Lite (Быстрый СНГ/РФ)",
+    "BUILTIN_IPTVX_FULL" to "🌍 Встроенный 3: IPTVx.one Full (Полная база)"
+)
+
 fun getAppVersionInfo(context: Context): Pair<String, Long> = runCatching {
     val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
     (pInfo.versionName ?: "1.0") to pInfo.longVersionCode
@@ -288,16 +295,17 @@ fun AccordionSettingsScreen(
                             Text(if (S.isRu) "🔄 Обновить телепрограмму сейчас" else "🔄 Refresh EPG Now", fontWeight = FontWeight.Bold)
                         }
                     }
-                    Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(S.usePlaylistEpgSwitch, fontWeight = FontWeight.Bold, color = theme.text)
-                            if (!detectedPlaylistEpgUrl.isNullOrBlank()) Text("EPG: $detectedPlaylistEpgUrl", fontSize = 12.sp, color = theme.primary)
-                        }
-                        Switch(checked = usePlaylistEpg, onCheckedChange = onToggleUsePlaylistEpg)
-                    }
-                    val epgOpts = listOf("AUTO_PLAYLIST" to S.epgFromPlaylistOption) + epgSources.map { it.id to it.name }
-                    val curEpg = epgOpts.find { it.first == selectedEpgId }?.second ?: S.epgFromPlaylistOption
-                    SourceDropdownSelector(S.activeEpgLabel, curEpg, epgOpts, theme, onSelectEpg)
+                    // Выпадающий список со встроенными источниками EPG (TVLider, IPTVx) + пользовательскими!
+                    val epgOpts = BuiltInEpgPresets + epgSources.map { it.id to "📌 ${it.name}" }
+                    val curEpg = epgOpts.find { it.first == selectedEpgId }?.second ?: BuiltInEpgPresets.first().second
+                    SourceDropdownSelector(
+                        label = S.activeEpgLabel,
+                        selectedTitle = curEpg,
+                        options = epgOpts,
+                        theme = theme,
+                        onSelect = onSelectEpg
+                    )
+
                     OutlinedTextField(value = newEpgName, onValueChange = { newEpgName = it }, label = { Text(S.addSourceName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = newEpgUrl, onValueChange = { newEpgUrl = it }, label = { Text(S.addSourceUrl) }, trailingIcon = { if (newEpgUrl.isNotEmpty()) IconButton(onClick = { newEpgUrl = "" }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Button(onClick = { if (newEpgUrl.isNotBlank()) { onAddEpg(newEpgName.trim().ifEmpty { "EPG ${epgSources.size + 1}" }, newEpgUrl.trim()); newEpgName = ""; newEpgUrl = "" } }, modifier = Modifier.fillMaxWidth()) { Text(S.addBtn, fontWeight = FontWeight.Bold) }
@@ -349,7 +357,6 @@ fun AccordionSettingsScreen(
                 Switch(checked = openFullscreenOnTap, onCheckedChange = onAutoFsChange)
             }
 
-            // Родительский контроль (PIN-код на 18+)
             Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(if (S.isRu) "🔒 Родительский контроль (PIN-код на 18+)" else "🔒 Parental Control (18+ PIN)", fontWeight = FontWeight.Bold, color = theme.text, modifier = Modifier.weight(1f))
@@ -481,7 +488,7 @@ fun AccordionSettingsScreen(
             if (backupStatus.isNotBlank()) Text(backupStatus, fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
         }
 
-        // 5. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ (С ПРОВЕРКОЙ «ОБНОВЛЕНИЙ НЕТ»)
+        // 5. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ
         ExpandableSectionRow(if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)", expandedRow == 4, theme, { toggleRow(4) }) {
             Text(if (S.isRu) "Установленная версия: v$installedVerName (Build #$installedVerCode)" else "Installed: v$installedVerName (Build #$installedVerCode)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = theme.subtext)
             Button(
@@ -541,7 +548,7 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 6. СПИСОК ИЗМЕНЕНИЙ (CHANGELOG)
+        // 6. СПИСОК ИЗМЕНЕНИЙ
         ExpandableSectionRow(S.catChangelog, expandedRow == 5, theme, { toggleRow(5) }) {
             AppChangelogHistory.forEachIndexed { idx, rel ->
                 val verTitle = if (idx == 0 || rel.version == "CURRENT") "v$installedVerName (Build #$installedVerCode • Текущая)" else rel.version
@@ -587,7 +594,6 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // ПОДВАЛ НАСТРОЕК: РАЗРАБОТЧИК И ВЕРСИЯ
         Spacer(Modifier.height(6.dp))
         Column(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(theme.card).border(1.dp, theme.primary.copy(alpha = 0.3f), RoundedCornerShape(14.dp)).padding(vertical = 16.dp, horizontal = 12.dp),
