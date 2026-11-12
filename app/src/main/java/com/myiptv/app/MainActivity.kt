@@ -41,11 +41,15 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -91,15 +95,10 @@ fun PlayerClockBadge(clockPosition: Int, currentTimeMs: Long, accentColor: Color
 @Composable
 fun PlayerActionPill(text: String, accentColor: Color = Color.White, onClick: () -> Unit) {
     Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0x55222834))
+        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(Color(0x55222834))
             .border(1.dp, accentColor.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
-            .clickable { onClick() }
-            .padding(horizontal = 11.dp, vertical = 6.dp)
-    ) {
-        Text(text, color = accentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-    }
+            .clickable { onClick() }.padding(horizontal = 11.dp, vertical = 6.dp)
+    ) { Text(text, color = accentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1) }
 }
 
 class MainActivity : ComponentActivity() {
@@ -121,6 +120,7 @@ class MainActivity : ComponentActivity() {
             var clockPosition by remember { mutableStateOf(prefs.getInt("clock_pos", 0)) }
             var playerEngine by remember { mutableStateOf(prefs.getInt("player_engine", 0)) }
             var archiveDays by remember { mutableStateOf(prefs.getInt("archive_days", 3)) }
+            var epgOffsetHours by remember { mutableStateOf(prefs.getInt("epg_offset_hours", 0)) }
             var parentalEnabled by remember { mutableStateOf(prefs.getBoolean("parental_enabled", false)) }
             var parentalPin by remember { mutableStateOf(prefs.getString("parental_pin", "0000") ?: "0000") }
             var adultUnlockedSession by remember { mutableStateOf(false) }
@@ -198,6 +198,15 @@ class MainActivity : ComponentActivity() {
             val visibleChannels = remember(channels, hiddenGroups) { channels.filterNot { hiddenGroups.contains(it.group) } }
             val allGroupsList = remember(channels) { channels.map { it.group }.distinct() }
 
+            // Настоящий полный экран (скрытие системной шторки Android и навигации)
+            val rootView = LocalView.current
+            LaunchedEffect(isFullscreen, isMultiViewMode) {
+                val ctrl = WindowCompat.getInsetsController(window, rootView)
+                ctrl.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                if (isFullscreen || isMultiViewMode) ctrl.hide(WindowInsetsCompat.Type.systemBars())
+                else ctrl.show(WindowInsetsCompat.Type.systemBars())
+            }
+
             LaunchedEffect(Unit) {
                 while (true) {
                     val now = System.currentTimeMillis()
@@ -211,10 +220,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     val due = reminders.firstOrNull { now >= it.startMs && (now - it.startMs) < 120000L }
-                    if (due != null) {
-                        reminders = reminders.filterNot { it.id == due.id }
-                        triggeredReminder = due
-                    }
+                    if (due != null) { reminders = reminders.filterNot { it.id == due.id }; triggeredReminder = due }
                     delay(1000L)
                 }
             }
@@ -222,12 +228,9 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(digitBuffer) {
                 if (digitBuffer.isNotEmpty()) {
                     delay(1400L)
-                    val targetNum = digitBuffer.toIntOrNull()
-                    digitBuffer = ""
-                    if (targetNum != null) {
-                        channels.find { it.number == targetNum }?.let { ch ->
-                            currentChannel = ch; activeArchiveProgram = null; archiveSeekOffsetSec = 0L; playbackSpeed = 1f
-                        }
+                    val targetNum = digitBuffer.toIntOrNull(); digitBuffer = ""
+                    if (targetNum != null) channels.find { it.number == targetNum }?.let { ch ->
+                        currentChannel = ch; activeArchiveProgram = null; archiveSeekOffsetSec = 0L; playbackSpeed = 1f
                     }
                 }
             }
@@ -239,8 +242,8 @@ class MainActivity : ComponentActivity() {
                 prefs.edit()
                     .putString("device_type", deviceType).putString("control_mode", controlMode)
                     .putInt("clock_pos", clockPosition).putInt("player_engine", playerEngine)
-                    .putInt("archive_days", archiveDays).putBoolean("parental_enabled", parentalEnabled)
-                    .putString("parental_pin", parentalPin.ifEmpty { "0000" })
+                    .putInt("archive_days", archiveDays).putInt("epg_offset_hours", epgOffsetHours)
+                    .putBoolean("parental_enabled", parentalEnabled).putString("parental_pin", parentalPin.ifEmpty { "0000" })
                     .putString("selected_playlist_id", selectedPlaylistId).putString("selected_epg_id", selectedEpgId)
                     .putBoolean("use_playlist_epg", usePlaylistEpg).putString("vportal_url", vportalUrl.trim())
                     .putString("stalker_url", stalkerUrl.trim()).putString("stalker_mac", stalkerMac.trim())
@@ -249,7 +252,7 @@ class MainActivity : ComponentActivity() {
                     .apply()
             }
 
-            fun loadEpgWithStatus(embeddedOverride: String? = detectedPlaylistEpgUrl) {
+            fun loadEpgWithStatus(embeddedOverride: String? = detectedPlaylistEpgUrl, forceRefresh: Boolean = false) {
                 val customSelected = epgSources.find { it.id == selectedEpgId }?.url
                 val candidateUrls = when (selectedEpgId) {
                     "BUILTIN_TVLIDER" -> listOf(EPG_URL_TVLIDER, EPG_URL_IPTVX_LITE)
@@ -266,19 +269,19 @@ class MainActivity : ComponentActivity() {
                     for (testUrl in candidateUrls) {
                         usedUrl = testUrl
                         epgStatusText = "⏳ $testUrl ..."
-                        val loaded = NetworkLoader.loadFullEpgSchedule(testUrl.trim(), archiveDays)
+                        val loaded = NetworkLoader.loadFullEpgSchedule(testUrl.trim(), archiveDays, epgOffsetHours, this@MainActivity, forceRefresh)
                         if (loaded.isNotEmpty()) { finalSchedule = loaded; break }
                     }
                     epgScheduleMap = finalSchedule; isEpgLoading = false
                     val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
                     val matchedCount = channels.count { findChannelSchedule(it, finalSchedule).isNotEmpty() }
                     epgStatusText = if (finalSchedule.isNotEmpty()) {
-                        "✅ $timeStr ($usedUrl)\nКаналов с EPG: $matchedCount / ${channels.size} (${archiveDays}д)"
+                        "✅ $timeStr ($usedUrl)\nКаналов с EPG: $matchedCount / ${channels.size} (${archiveDays}д, сдвиг ${epgOffsetHours}ч)"
                     } else "⚠️ EPG не загружен ($timeStr)"
                 }
             }
 
-            fun reloadAllData() {
+            fun reloadAllData(forceRefresh: Boolean = false) {
                 persistLists()
                 scope.launch {
                     isLoading = true
@@ -288,7 +291,7 @@ class MainActivity : ComponentActivity() {
 
                     val activePlaylist = playlists.find { it.id == selectedPlaylistId } ?: playlists.firstOrNull()
                     if (activePlaylist != null && activePlaylist.url.isNotBlank()) {
-                        val m3uRes = NetworkLoader.loadM3u(activePlaylist.url.trim())
+                        val m3uRes = NetworkLoader.loadM3u(activePlaylist.url.trim(), this@MainActivity, forceRefresh)
                         loadedChannels.addAll(m3uRes.channels); loadedVod.addAll(m3uRes.movies)
                         embeddedEpg = m3uRes.embeddedEpgUrl; detectedPlaylistEpgUrl = embeddedEpg
                     }
@@ -298,12 +301,13 @@ class MainActivity : ComponentActivity() {
                         vodFolderStack = emptyList(); currentVodFolderTitle = if (isRu) "Кинозал VPortal" else "VPortal Root"
                     }
                     if (stalkerUrl.isNotBlank() && stalkerMac.isNotBlank()) {
-                        loadedChannels.addAll(NetworkLoader.loadStalker(stalkerUrl.trim(), stalkerMac.trim()))
+                        val (stCh, stVod) = NetworkLoader.loadStalkerFull(stalkerUrl.trim(), stalkerMac.trim())
+                        loadedChannels.addAll(stCh); loadedVod.addAll(stVod)
                     }
                     channels = loadedChannels; vodItems = loadedVod
                     if (currentChannel == null && loadedChannels.isNotEmpty()) currentChannel = loadedChannels.first()
                     isLoading = false
-                    loadEpgWithStatus(embeddedEpg)
+                    loadEpgWithStatus(embeddedEpg, forceRefresh)
                 }
             }
 
@@ -314,6 +318,7 @@ class MainActivity : ComponentActivity() {
                 clockPosition = prefs.getInt("clock_pos", 0)
                 playerEngine = prefs.getInt("player_engine", 0)
                 archiveDays = prefs.getInt("archive_days", 3)
+                epgOffsetHours = prefs.getInt("epg_offset_hours", 0)
                 parentalEnabled = prefs.getBoolean("parental_enabled", false)
                 parentalPin = prefs.getString("parental_pin", "0000") ?: "0000"
                 themePalette = AppThemePalette.fromId(prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
@@ -330,7 +335,14 @@ class MainActivity : ComponentActivity() {
                 openFullscreenOnTap = prefs.getBoolean("player_auto_fs", false)
                 favoriteIds = prefs.getStringSet("favs", emptySet())?.toSet() ?: emptySet()
                 hiddenGroups = loadHiddenGroups(prefs)
-                reloadAllData()
+                reloadAllData(forceRefresh = true)
+            }
+
+            fun openExternalSafe(rawUrl: String, title: String) {
+                scope.launch {
+                    val real = NetworkLoader.resolveStalkerStreamIfNeeded(rawUrl)
+                    launchExternalVideoPlayer(this@MainActivity, real, title)
+                }
             }
 
             fun selectChannelWithPinCheck(ch: Channel) {
@@ -339,7 +351,7 @@ class MainActivity : ComponentActivity() {
                     currentVodPlay = null; activeArchiveProgram = null; archiveSeekOffsetSec = 0L; playbackSpeed = 1f
                     currentChannel = ch
                     if (openFullscreenOnTap) {
-                        if (playerEngine == 2) launchExternalVideoPlayer(this@MainActivity, ch.streamUrl, ch.name) else isFullscreen = true
+                        if (playerEngine == 2) openExternalSafe(ch.streamUrl, ch.name) else isFullscreen = true
                     }
                 }
                 if (parentalEnabled && !adultUnlockedSession && (isAdultCategoryOrChannel(ch.group) || isAdultCategoryOrChannel(ch.name))) {
@@ -362,7 +374,7 @@ class MainActivity : ComponentActivity() {
 
             fun startVodPlayback(key: String, title: String, poster: String?, streamUrl: String, seekMs: Long) {
                 if (playerEngine == 2) {
-                    launchExternalVideoPlayer(this@MainActivity, streamUrl, title)
+                    openExternalSafe(streamUrl, title)
                 } else {
                     val item = VodProgressItem(key, title, poster, streamUrl, seekMs, 0L, System.currentTimeMillis())
                     vodHistory = saveVodProgressItem(prefs, item)
@@ -404,25 +416,19 @@ class MainActivity : ComponentActivity() {
                     scope.launch(Dispatchers.Main) {
                         val m3u = payload["m3u"].orEmpty()
                         val m3uName = payload["m3u_name"].orEmpty().ifEmpty { "Плейлист ${playlists.size + 1}" }
-                        if (m3u.isNotBlank()) {
-                            val newId = "pl_${System.currentTimeMillis()}"
-                            playlists = playlists + NamedSource(newId, m3uName, m3u); selectedPlaylistId = newId
-                        }
+                        if (m3u.isNotBlank()) { val id = "pl_${System.currentTimeMillis()}"; playlists = playlists + NamedSource(id, m3uName, m3u); selectedPlaylistId = id }
                         val epg = payload["epg"].orEmpty()
                         val epgName = payload["epg_name"].orEmpty().ifEmpty { "EPG ${epgSources.size + 1}" }
-                        if (epg.isNotBlank()) {
-                            val newEpgId = "epg_${System.currentTimeMillis()}"
-                            epgSources = epgSources + NamedSource(newEpgId, epgName, epg); selectedEpgId = newEpgId
-                        }
+                        if (epg.isNotBlank()) { val id = "epg_${System.currentTimeMillis()}"; epgSources = epgSources + NamedSource(id, epgName, epg); selectedEpgId = id }
                         if (payload["vportal"]?.isNotBlank() == true) vportalUrl = payload["vportal"]!!
-                        reloadAllData(); currentTab = 0
+                        reloadAllData(forceRefresh = true); currentTab = 0
                     }
                 }.also { it.start() }
                 onDispose { webServer?.stop() }
             }
 
             LaunchedEffect(Unit) {
-                if (!isFirstLaunch && (playlists.isNotEmpty() || vportalUrl.isNotBlank() || stalkerUrl.isNotBlank())) reloadAllData()
+                if (!isFirstLaunch && (playlists.isNotEmpty() || vportalUrl.isNotBlank() || stalkerUrl.isNotBlank())) reloadAllData(forceRefresh = false)
             }
 
             val colorScheme = if (themePalette.isDark) {
@@ -441,82 +447,39 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = themePalette.bg) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         if (showSleepTriggeredNotice) {
-                            AlertDialog(
-                                onDismissRequest = { showSleepTriggeredNotice = false },
-                                title = { Text(if (S.isRu) "😴 Таймер сна" else "😴 Sleep Timer") },
-                                text = { Text(if (S.isRu) "Воспроизведение остановлено по таймеру." else "Playback stopped by sleep timer.") },
-                                confirmButton = { Button(onClick = { showSleepTriggeredNotice = false }) { Text("OK") } }
-                            )
+                            AlertDialog(onDismissRequest = { showSleepTriggeredNotice = false }, title = { Text("😴 Таймер сна") }, text = { Text(if (S.isRu) "Воспроизведение остановлено по таймеру." else "Stopped by sleep timer.") }, confirmButton = { Button(onClick = { showSleepTriggeredNotice = false }) { Text("OK") } })
                         }
-
                         if (triggeredReminder != null) {
                             val rem = triggeredReminder!!
                             AlertDialog(
                                 onDismissRequest = { triggeredReminder = null },
                                 title = { Text("🔔 ${rem.programTitle}") },
                                 text = { Text(if (S.isRu) "Начинается на канале «${rem.channelName}». Переключить?" else "Starting on ${rem.channelName}. Switch?") },
-                                confirmButton = {
-                                    Button(onClick = {
-                                        channels.find { it.id == rem.channelId }?.let { selectChannelWithPinCheck(it) }
-                                        triggeredReminder = null
-                                    }) { Text(if (S.isRu) "▶ Переключить" else "▶ Switch") }
-                                },
+                                confirmButton = { Button(onClick = { channels.find { it.id == rem.channelId }?.let { selectChannelWithPinCheck(it) }; triggeredReminder = null }) { Text("▶ Переключить") } },
                                 dismissButton = { OutlinedButton(onClick = { triggeredReminder = null }) { Text(if (S.isRu) "Позже" else "Dismiss") } }
                             )
                         }
-
                         if (pendingPinAction != null) {
-                            ParentalPinDialog(S, themePalette, parentalPin.ifEmpty { "0000" }, onSuccess = {
-                                adultUnlockedSession = true; val act = pendingPinAction; pendingPinAction = null; act?.invoke()
-                            }, onDismiss = { pendingPinAction = null })
+                            ParentalPinDialog(S, themePalette, parentalPin.ifEmpty { "0000" }, onSuccess = { adultUnlockedSession = true; val act = pendingPinAction; pendingPinAction = null; act?.invoke() }, onDismiss = { pendingPinAction = null })
                         }
-
                         if (showHiddenGroupsDialog) {
-                            HiddenCategoriesDialog(
-                                S, themePalette, allGroupsList, hiddenGroups,
-                                onToggleGroup = { grp -> hiddenGroups = if (hiddenGroups.contains(grp)) hiddenGroups - grp else hiddenGroups + grp; saveHiddenGroups(prefs, hiddenGroups) },
-                                onShowAll = { hiddenGroups = emptySet(); saveHiddenGroups(prefs, hiddenGroups) },
-                                onDismiss = { showHiddenGroupsDialog = false }
-                            )
+                            HiddenCategoriesDialog(S, themePalette, allGroupsList, hiddenGroups, onToggleGroup = { grp -> hiddenGroups = if (hiddenGroups.contains(grp)) hiddenGroups - grp else hiddenGroups + grp; saveHiddenGroups(prefs, hiddenGroups) }, onShowAll = { hiddenGroups = emptySet(); saveHiddenGroups(prefs, hiddenGroups) }, onDismiss = { showHiddenGroupsDialog = false })
                         }
-
                         if (showSleepDialog) {
                             SleepTimerDialog(S, themePalette, (sleepSecondsLeft + 59) / 60, onSelectMinutes = { sleepSecondsLeft = it * 60 }, onDismiss = { showSleepDialog = false })
                         }
-
                         if (selectedVodForDetails != null) {
-                            val m = selectedVodForDetails!!
-                            val saved = vodHistory.find { it.key == m.id || it.streamUrl == m.streamUrl }
-                            VodDetailsDialog(
-                                S, themePalette, m, saved,
-                                onPlayFromStart = { selectedVodForDetails = null; startVodPlayback(m.id, m.title, m.posterUrl, m.streamUrl, 0L) },
-                                onResume = { pos -> selectedVodForDetails = null; startVodPlayback(m.id, m.title, m.posterUrl, m.streamUrl, pos) },
-                                onDismiss = { selectedVodForDetails = null }
-                            )
+                            val m = selectedVodForDetails!!; val saved = vodHistory.find { it.key == m.id || it.streamUrl == m.streamUrl }
+                            VodDetailsDialog(S, themePalette, m, saved, onPlayFromStart = { selectedVodForDetails = null; startVodPlayback(m.id, m.title, m.posterUrl, m.streamUrl, 0L) }, onResume = { pos -> selectedVodForDetails = null; startVodPlayback(m.id, m.title, m.posterUrl, m.streamUrl, pos) }, onDismiss = { selectedVodForDetails = null })
                         }
-
                         if (epgDialogChannel != null) {
-                            val ch = epgDialogChannel!!
-                            val schedule = remember(ch, epgScheduleMap) { findChannelSchedule(ch, epgScheduleMap) }
-                            EpgAndArchiveDialog(
-                                S, themePalette, ch, schedule, reminders,
-                                onDismiss = { epgDialogChannel = null },
-                                onToggleReminder = { toggleReminderFor(ch, it) },
-                                onPlayArchive = { prog ->
-                                    currentChannel = ch; currentVodPlay = null; activeArchiveProgram = prog; archiveSeekOffsetSec = 0L; epgDialogChannel = null
-                                    if (playerEngine == 2) launchExternalVideoPlayer(this@MainActivity, buildArchiveStreamUrl(ch, prog.startMs, prog.stopMs), "${ch.name}: ${prog.title}")
-                                },
-                                onPlayLive = {
-                                    currentChannel = ch; currentVodPlay = null; activeArchiveProgram = null; archiveSeekOffsetSec = 0L; epgDialogChannel = null
-                                    if (playerEngine == 2) launchExternalVideoPlayer(this@MainActivity, ch.streamUrl, ch.name)
-                                }
-                            )
+                            val ch = epgDialogChannel!!; val schedule = remember(ch, epgScheduleMap) { findChannelSchedule(ch, epgScheduleMap) }
+                            EpgAndArchiveDialog(S, themePalette, ch, schedule, reminders, onDismiss = { epgDialogChannel = null }, onToggleReminder = { toggleReminderFor(ch, it) },
+                                onPlayArchive = { prog -> currentChannel = ch; currentVodPlay = null; activeArchiveProgram = prog; archiveSeekOffsetSec = 0L; epgDialogChannel = null; if (playerEngine == 2) openExternalSafe(buildArchiveStreamUrl(ch, prog.startMs, prog.stopMs), "${ch.name}: ${prog.title}") },
+                                onPlayLive = { currentChannel = ch; currentVodPlay = null; activeArchiveProgram = null; archiveSeekOffsetSec = 0L; epgDialogChannel = null; if (playerEngine == 2) openExternalSafe(ch.streamUrl, ch.name) })
                         }
-
                         if (showQuickChannelPicker && visibleChannels.isNotEmpty()) {
-                            QuickChannelPickerDialog(S, themePalette, visibleChannels, currentChannel, onDismiss = { showQuickChannelPicker = false }) { ch ->
-                                selectChannelWithPinCheck(ch); showQuickChannelPicker = false
-                            }
+                            QuickChannelPickerDialog(S, themePalette, visibleChannels, currentChannel, onDismiss = { showQuickChannelPicker = false }) { ch -> selectChannelWithPinCheck(ch); showQuickChannelPicker = false }
                         }
 
                         if (isFirstLaunch) {
@@ -532,8 +495,7 @@ class MainActivity : ComponentActivity() {
                             }
                         } else if (isFullscreen && (currentChannel != null || currentVodPlay != null)) {
                             BackHandler { if (showTiviMateOverlay) showTiviMateOverlay = false else isFullscreen = false }
-                            val isVod = currentVodPlay != null
-                            val isArchive = !isVod && activeArchiveProgram != null
+                            val isVod = currentVodPlay != null; val isArchive = !isVod && activeArchiveProgram != null
                             val playUrl = currentVodPlay?.streamUrl ?: activeArchiveUrl ?: currentChannel?.streamUrl ?: ""
                             val playTitle = currentVodPlay?.title ?: activeArchiveProgram?.let { "⏪ ${it.title}" } ?: currentChannel?.name ?: ""
                             val resizeLabels = if (isRu) listOf("По размеру", "16:9", "Zoom") else listOf("Fit", "16:9", "Zoom")
@@ -542,15 +504,11 @@ class MainActivity : ComponentActivity() {
                             val isSmartphone = deviceType == "mobile"
                             val fsFocusRequester = remember { FocusRequester() }
 
-                            LaunchedEffect(isFullscreen, showTiviMateOverlay) {
-                                if (isFullscreen && !showTiviMateOverlay) runCatching { fsFocusRequester.requestFocus() }
-                            }
+                            LaunchedEffect(isFullscreen, showTiviMateOverlay) { if (isFullscreen && !showTiviMateOverlay) runCatching { fsFocusRequester.requestFocus() } }
 
                             if (showPlayerQuickMenu) {
                                 PlayerQuickMenuDialog(
-                                    S = S, theme = themePalette, isVod = isVod, isArchive = isArchive, playerEngine = playerEngine,
-                                    resizeLabel = resizeLabels[playerResizeMode], playbackSpeed = playbackSpeed,
-                                    sleepMinutesLeft = (sleepSecondsLeft + 59) / 60, isSmartphone = isSmartphone,
+                                    S, themePalette, isVod, isArchive, playerEngine, resizeLabels[playerResizeMode], playbackSpeed, (sleepSecondsLeft + 59) / 60, isSmartphone,
                                     onCycleResize = { playerResizeMode = (playerResizeMode + 1) % 3; prefs.edit().putInt("player_resize", playerResizeMode).apply() },
                                     onOpenAudio = { showPlayerQuickMenu = false; showAudioTracksDialog = true },
                                     onCycleSpeed = { playbackSpeed = when (playbackSpeed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 1f } },
@@ -565,8 +523,7 @@ class MainActivity : ComponentActivity() {
                             }
 
                             Box(
-                                modifier = Modifier.fillMaxSize().background(Color.Black)
-                                    .focusRequester(fsFocusRequester).focusable()
+                                modifier = Modifier.fillMaxSize().background(Color.Black).focusRequester(fsFocusRequester).focusable()
                                     .onPreviewKeyEvent { ev ->
                                         if (ev.type == KeyEventType.KeyDown && !showTiviMateOverlay && !isVod) {
                                             val code = ev.nativeKeyEvent.keyCode
@@ -589,17 +546,12 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 SmartVideoPlayer(
                                     streamUrl = playUrl, userAgent = currentChannel?.userAgent ?: playerDefaultUa,
-                                    resizeMode = playerResizeMode, bufferMode = playerBufferMode,
-                                    useNativeController = isVod || playerEngine == 1, reconnectingText = S.reconnecting,
-                                    playerEngine = playerEngine, enableSwipeGestures = controlMode == "touch",
-                                    playbackSpeed = if (isVod || isArchive) playbackSpeed else 1f,
-                                    initialSeekMs = if (isVod) vodInitialSeekMs else 0L, seekCommand = seekCommand,
+                                    resizeMode = playerResizeMode, bufferMode = playerBufferMode, useNativeController = isVod || playerEngine == 1,
+                                    reconnectingText = S.reconnecting, playerEngine = playerEngine, enableSwipeGestures = controlMode == "touch",
+                                    playbackSpeed = if (isVod || isArchive) playbackSpeed else 1f, initialSeekMs = if (isVod) vodInitialSeekMs else 0L, seekCommand = seekCommand,
                                     showAudioSelectorDialog = showAudioTracksDialog, onDismissAudioSelector = { showAudioTracksDialog = false },
                                     onVideoQualityDetected = { videoQualityLabel = it },
-                                    onPlaybackProgress = { pos, dur ->
-                                        val vp = currentVodPlay
-                                        if (isVod && vp != null) vodHistory = saveVodProgressItem(prefs, vp.copy(positionMs = pos, durationMs = dur, updatedAt = System.currentTimeMillis()))
-                                    },
+                                    onPlaybackProgress = { pos, dur -> val vp = currentVodPlay; if (isVod && vp != null) vodHistory = saveVodProgressItem(prefs, vp.copy(positionMs = pos, durationMs = dur, updatedAt = System.currentTimeMillis())) },
                                     modifier = Modifier.fillMaxSize()
                                 )
 
@@ -611,34 +563,23 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
 
-                                // ЧИСТАЯ ВЕРХНЯЯ ПАНЕЛЬ (никогда не съезжает за экран!)
                                 Row(
                                     modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
                                         .padding(top = if (clockPosition != 0) 40.dp else 10.dp, start = 10.dp, end = 10.dp)
                                         .clip(RoundedCornerShape(14.dp)).background(Color(0xBB000000)).padding(horizontal = 12.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(playTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        if (videoQualityLabel.isNotBlank()) {
-                                            Text(videoQualityLabel, color = themePalette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                                        }
+                                        if (videoQualityLabel.isNotBlank()) Text(videoQualityLabel, color = themePalette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                     if (isSmartphone) {
-                                        IconButton(onClick = { triggerPipMode() }, modifier = Modifier.size(36.dp)) {
-                                            Icon(Icons.Default.PictureInPictureAlt, null, tint = Color.White)
-                                        }
+                                        IconButton(onClick = { triggerPipMode() }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.PictureInPictureAlt, null, tint = Color.White) }
                                     }
-                                    IconButton(onClick = { showPlayerQuickMenu = true }, modifier = Modifier.size(36.dp)) {
-                                        Icon(Icons.Default.Tune, null, tint = themePalette.primary)
-                                    }
-                                    IconButton(onClick = { isFullscreen = false }, modifier = Modifier.size(36.dp)) {
-                                        Icon(Icons.Default.FullscreenExit, null, tint = Color.White)
-                                    }
+                                    IconButton(onClick = { showPlayerQuickMenu = true }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.Tune, null, tint = themePalette.primary) }
+                                    IconButton(onClick = { isFullscreen = false }, modifier = Modifier.size(36.dp)) { Icon(Icons.Default.FullscreenExit, null, tint = Color.White) }
                                 }
 
-                                // ЭРГОНОМИЧНАЯ НИЖНЯЯ ПАНЕЛЬ ПОД БОЛЬШОЙ ПАЛЕЦ (для прямого эфира и архива)
                                 if (!isVod && currentChannel != null && !showTiviMateOverlay) {
                                     Column(
                                         modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp)
@@ -647,24 +588,18 @@ class MainActivity : ComponentActivity() {
                                     ) {
                                         if (playerEngine == 0) {
                                             if (isArchive && activeArchiveProgram != null) {
-                                                val prog = activeArchiveProgram!!
-                                                val totalSec = ((prog.stopMs - prog.startMs) / 1000L).coerceAtLeast(60L)
+                                                val prog = activeArchiveProgram!!; val totalSec = ((prog.stopMs - prog.startMs) / 1000L).coerceAtLeast(60L)
                                                 var sliderPos by remember(archiveSeekOffsetSec) { mutableStateOf(archiveSeekOffsetSec.toFloat()) }
                                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                                     Text("⏪ ${prog.title}", color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
-                                                    TextButton(onClick = { activeArchiveProgram = null; archiveSeekOffsetSec = 0L; playbackSpeed = 1f }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
-                                                        Text("🔴 Эфир", color = Color(0xFFEF4444), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                                    }
+                                                    TextButton(onClick = { activeArchiveProgram = null; archiveSeekOffsetSec = 0L; playbackSpeed = 1f }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) { Text("🔴 Эфир", color = Color(0xFFEF4444), fontSize = 12.sp, fontWeight = FontWeight.Bold) }
                                                 }
                                                 Slider(value = sliderPos.coerceIn(0f, totalSec.toFloat()), onValueChange = { sliderPos = it }, onValueChangeFinished = { archiveSeekOffsetSec = sliderPos.toLong() }, valueRange = 0f..totalSec.toFloat(), modifier = Modifier.fillMaxWidth().height(26.dp))
                                             } else if (nowProg != null) {
-                                                val totalMs = (nowProg.stopMs - nowProg.startMs).coerceAtLeast(1L)
-                                                val elapsedMs = (currentTimeMs - nowProg.startMs).coerceIn(0L, totalMs)
+                                                val totalMs = (nowProg.stopMs - nowProg.startMs).coerceAtLeast(1L); val elapsedMs = (currentTimeMs - nowProg.startMs).coerceIn(0L, totalMs)
                                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                                     Text("🟢 ${nowProg.title}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
-                                                    if (currentChannel!!.catchupDays > 0) {
-                                                        Text("⏪ С начала", color = Color(0xFFF59E0B), fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { activeArchiveProgram = nowProg; archiveSeekOffsetSec = 0L })
-                                                    }
+                                                    if (currentChannel!!.catchupDays > 0) Text("⏪ С начала", color = Color(0xFFF59E0B), fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { activeArchiveProgram = nowProg; archiveSeekOffsetSec = 0L })
                                                 }
                                                 LinearProgressIndicator(progress = { (elapsedMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)), color = themePalette.primary)
                                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -673,19 +608,11 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                         }
-
-                                        // Прокручиваемая лента быстрых кнопок внизу под палец
                                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            if (isSmartphone) {
-                                                item { PlayerActionPill(if (S.isRu) "📋 Каналы" else "📋 Channels", Color(0xFF38BDF8)) { showQuickChannelPicker = true } }
-                                            }
+                                            if (isSmartphone) item { PlayerActionPill(if (S.isRu) "📋 Каналы" else "📋 Channels", Color(0xFF38BDF8)) { showQuickChannelPicker = true } }
                                             item { PlayerActionPill(if (S.isRu) "🗂 ТВ-Гид" else "🗂 Guide", Color(0xFF10B981)) { showTiviMateOverlay = true } }
                                             if (playerEngine == 0) {
-                                                item {
-                                                    PlayerActionPill("📐 ${resizeLabels[playerResizeMode]}") {
-                                                        playerResizeMode = (playerResizeMode + 1) % 3; prefs.edit().putInt("player_resize", playerResizeMode).apply()
-                                                    }
-                                                }
+                                                item { PlayerActionPill("📐 ${resizeLabels[playerResizeMode]}") { playerResizeMode = (playerResizeMode + 1) % 3; prefs.edit().putInt("player_resize", playerResizeMode).apply() } }
                                                 item { PlayerActionPill(if (S.isRu) "🔊 Звук" else "🔊 Audio") { showAudioTracksDialog = true } }
                                                 if (isArchive) {
                                                     item { PlayerActionPill("${playbackSpeed}x", Color(0xFF38BDF8)) { playbackSpeed = when (playbackSpeed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 1f } } }
@@ -703,14 +630,7 @@ class MainActivity : ComponentActivity() {
                                 }
 
                                 if (showTiviMateOverlay) {
-                                    TiviMateTvOverlay(
-                                        S = S, theme = themePalette, channels = channels, hiddenGroups = hiddenGroups,
-                                        epgScheduleMap = epgScheduleMap, reminders = reminders, currentChannel = currentChannel,
-                                        onSelectChannel = { selectChannelWithPinCheck(it) },
-                                        onPlayArchive = { ch, prog -> currentChannel = ch; activeArchiveProgram = prog; archiveSeekOffsetSec = 0L },
-                                        onToggleReminder = { ch, prog -> toggleReminderFor(ch, prog) },
-                                        onClose = { showTiviMateOverlay = false }
-                                    )
+                                    TiviMateTvOverlay(S, themePalette, channels, hiddenGroups, epgScheduleMap, reminders, currentChannel, onSelectChannel = { selectChannelWithPinCheck(it) }, onPlayArchive = { ch, prog -> currentChannel = ch; activeArchiveProgram = prog; archiveSeekOffsetSec = 0L }, onToggleReminder = { ch, prog -> toggleReminderFor(ch, prog) }, onClose = { showTiviMateOverlay = false })
                                 }
                             }
                         } else {
@@ -720,91 +640,58 @@ class MainActivity : ComponentActivity() {
                                     NavigationBarItem(selected = currentTab == 1, onClick = { currentTab = 1 }, icon = { Icon(Icons.Default.Movie, null) }, label = { Text("${S.vod} (${vodItems.count { !it.id.startsWith("vp_next_") }})") })
                                     NavigationBarItem(selected = currentTab == 2, onClick = { currentTab = 2 }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text(S.settings) })
                                 }
-
                                 if (isLoading || isLoadingMoreVod) LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = themePalette.primary)
 
                                 when (currentTab) {
                                     0 -> LiveTvScreen(
-                                        S = S, theme = themePalette, playlists = playlists, selectedPlaylistId = selectedPlaylistId,
-                                        onSelectPlaylistId = { selectedPlaylistId = it; reloadAllData() },
-                                        channels = visibleChannels, epgScheduleMap = epgScheduleMap, favoriteIds = favoriteIds,
-                                        currentChannel = currentChannel, previousChannel = previousChannel,
-                                        activeArchiveProgram = activeArchiveProgram, activeArchiveUrl = activeArchiveUrl,
-                                        currentTimeMs = currentTimeMs, clockPosition = clockPosition,
-                                        playerEngine = playerEngine, playerResizeMode = playerResizeMode,
-                                        playerBufferMode = playerBufferMode, playerDefaultUa = playerDefaultUa,
-                                        onSelectChannel = { selectChannelWithPinCheck(it) },
-                                        onOpenEpgDialog = { epgDialogChannel = it },
-                                        onOpenHiddenGroups = { showHiddenGroupsDialog = true },
+                                        S, themePalette, playlists, selectedPlaylistId, onSelectPlaylistId = { selectedPlaylistId = it; reloadAllData(forceRefresh = false) },
+                                        visibleChannels, epgScheduleMap, favoriteIds, currentChannel, previousChannel, activeArchiveProgram, activeArchiveUrl,
+                                        currentTimeMs, clockPosition, playerEngine, playerResizeMode, playerBufferMode, playerDefaultUa,
+                                        onSelectChannel = { selectChannelWithPinCheck(it) }, onOpenEpgDialog = { epgDialogChannel = it }, onOpenHiddenGroups = { showHiddenGroupsDialog = true },
                                         onResetToLive = { activeArchiveProgram = null; archiveSeekOffsetSec = 0L; playbackSpeed = 1f },
-                                        onToggleFavorite = { ch ->
-                                            val next = favoriteIds.toMutableSet()
-                                            if (!next.add(ch.id)) next.remove(ch.id)
-                                            favoriteIds = next; prefs.edit().putStringSet("favs", next).apply()
-                                        },
-                                        onFullscreen = {
-                                            val ch = currentChannel ?: return@LiveTvScreen
-                                            val urlToOpen = activeArchiveUrl ?: ch.streamUrl
-                                            if (playerEngine == 2) launchExternalVideoPlayer(this@MainActivity, urlToOpen, ch.name) else isFullscreen = true
-                                        },
+                                        onToggleFavorite = { ch -> val next = favoriteIds.toMutableSet(); if (!next.add(ch.id)) next.remove(ch.id); favoriteIds = next; prefs.edit().putStringSet("favs", next).apply() },
+                                        onFullscreen = { val ch = currentChannel ?: return@LiveTvScreen; val url = activeArchiveUrl ?: ch.streamUrl; if (playerEngine == 2) openExternalSafe(url, ch.name) else isFullscreen = true },
                                         onOpenSettings = { currentTab = 2 }
                                     )
                                     1 -> VodScreen(
-                                        S = S, theme = themePalette, movies = vodItems, vodHistory = vodHistory,
-                                        folderTitle = currentVodFolderTitle, canGoBack = vodFolderStack.isNotEmpty(),
-                                        isLoadingMore = isLoadingMoreVod, noticeMessage = vodNoticeMessage, diagnosticLog = vportalDiagnostic,
-                                        onBackFolder = {
-                                            vodNoticeMessage = ""
-                                            if (vodFolderStack.isNotEmpty()) {
-                                                val last = vodFolderStack.last(); currentVodFolderTitle = last.first; vodItems = last.second; vodFolderStack = vodFolderStack.dropLast(1)
-                                            }
-                                        },
-                                        onClickItem = { openVodNode(it) },
-                                        onClickHistoryItem = { h -> startVodPlayback(h.key, h.title, h.posterUrl, h.streamUrl, h.positionMs) },
+                                        S, themePalette, vodItems, vodHistory, currentVodFolderTitle, vodFolderStack.isNotEmpty(), isLoadingMoreVod, vodNoticeMessage, vportalDiagnostic,
+                                        onBackFolder = { vodNoticeMessage = ""; if (vodFolderStack.isNotEmpty()) { val last = vodFolderStack.last(); currentVodFolderTitle = last.first; vodItems = last.second; vodFolderStack = vodFolderStack.dropLast(1) } },
+                                        onClickItem = { openVodNode(it) }, onClickHistoryItem = { h -> startVodPlayback(h.key, h.title, h.posterUrl, h.streamUrl, h.positionMs) },
                                         onAutoLoadMore = { openVodNode(it) },
                                         onServerSearch = { q ->
                                             if (vportalUrl.isNotBlank() && q.isNotBlank()) scope.launch {
-                                                isLoading = true; val res = NetworkLoader.loadVPortalNode(vportalUrl.trim(), searchQuery = q.trim())
-                                                vportalDiagnostic = res.second; isLoading = false
-                                                if (res.first.isNotEmpty()) {
-                                                    vodFolderStack = vodFolderStack + (currentVodFolderTitle to vodItems); currentVodFolderTitle = "🔍 $q"; vodItems = res.first
-                                                }
+                                                isLoading = true; val res = NetworkLoader.loadVPortalNode(vportalUrl.trim(), searchQuery = q.trim()); vportalDiagnostic = res.second; isLoading = false
+                                                if (res.first.isNotEmpty()) { vodFolderStack = vodFolderStack + (currentVodFolderTitle to vodItems); currentVodFolderTitle = "🔍 $q"; vodItems = res.first }
                                             }
                                         },
                                         onOpenSettings = { currentTab = 2 }
                                     )
                                     2 -> AccordionSettingsScreen(
-                                        S = S, prefs = prefs, theme = themePalette, deviceType = deviceType, controlMode = controlMode,
-                                        clockPosition = clockPosition, playerEngine = playerEngine, archiveDays = archiveDays,
-                                        sleepTimerMinutes = (sleepSecondsLeft + 59) / 60, hiddenGroupsCount = hiddenGroups.size,
-                                        parentalEnabled = parentalEnabled, parentalPin = parentalPin,
+                                        S, prefs, themePalette, deviceType, controlMode, clockPosition, playerEngine, archiveDays, epgOffsetHours, (sleepSecondsLeft + 59) / 60, hiddenGroups.size,
+                                        parentalEnabled, parentalPin,
                                         onDeviceTypeChange = { deviceType = it; persistLists() }, onControlModeChange = { controlMode = it; persistLists() },
                                         onClockPositionChange = { clockPosition = it; persistLists() }, onPlayerEngineChange = { playerEngine = it; persistLists() },
-                                        onArchiveDaysChange = { archiveDays = it; persistLists(); loadEpgWithStatus() },
-                                        onSleepTimerChange = { mins -> sleepSecondsLeft = mins * 60 },
-                                        onOpenHiddenGroups = { showHiddenGroupsDialog = true },
-                                        onParentalEnabledChange = { parentalEnabled = it; adultUnlockedSession = false; persistLists() },
-                                        onParentalPinChange = { parentalPin = it; persistLists() },
+                                        onArchiveDaysChange = { archiveDays = it; persistLists(); loadEpgWithStatus(forceRefresh = false) },
+                                        onEpgOffsetChange = { epgOffsetHours = it; persistLists(); loadEpgWithStatus(forceRefresh = false) },
+                                        onSleepTimerChange = { sleepSecondsLeft = it * 60 }, onOpenHiddenGroups = { showHiddenGroupsDialog = true },
+                                        onParentalEnabledChange = { parentalEnabled = it; adultUnlockedSession = false; persistLists() }, onParentalPinChange = { parentalPin = it; persistLists() },
                                         onSelectTheme = { themePalette = it; prefs.edit().putString("theme_id", it.id).apply() },
                                         onToggleLanguage = { isRu = !isRu; prefs.edit().putString("lang", if (isRu) "ru" else "en").apply() },
-                                        playerResizeMode = playerResizeMode, playerBufferMode = playerBufferMode,
-                                        playerDefaultUa = playerDefaultUa, openFullscreenOnTap = openFullscreenOnTap,
+                                        playerResizeMode, playerBufferMode, playerDefaultUa, openFullscreenOnTap,
                                         onPlayerResizeChange = { playerResizeMode = it; persistLists() }, onPlayerBufferChange = { playerBufferMode = it; persistLists() },
                                         onPlayerUaChange = { playerDefaultUa = it; persistLists() }, onAutoFsChange = { openFullscreenOnTap = it; persistLists() },
-                                        playlists = playlists, selectedPlaylistId = selectedPlaylistId,
-                                        onSelectPlaylist = { selectedPlaylistId = it; reloadAllData() },
-                                        onAddPlaylist = { name, url -> val newId = "pl_${System.currentTimeMillis()}"; playlists = playlists + NamedSource(newId, name, url); selectedPlaylistId = newId; reloadAllData() },
+                                        playlists, selectedPlaylistId, onSelectPlaylist = { selectedPlaylistId = it; reloadAllData(forceRefresh = false) },
+                                        onAddPlaylist = { name, url -> val id = "pl_${System.currentTimeMillis()}"; playlists = playlists + NamedSource(id, name, url); selectedPlaylistId = id; reloadAllData(forceRefresh = true) },
                                         onDeletePlaylist = { id -> playlists = playlists.filterNot { it.id == id }; if (selectedPlaylistId == id) selectedPlaylistId = playlists.firstOrNull()?.id ?: ""; persistLists() },
-                                        epgSources = epgSources, selectedEpgId = selectedEpgId, usePlaylistEpg = usePlaylistEpg,
-                                        detectedPlaylistEpgUrl = detectedPlaylistEpgUrl, isEpgLoading = isEpgLoading, epgStatusText = epgStatusText,
-                                        onRefreshEpgNow = { persistLists(); loadEpgWithStatus() },
-                                        onToggleUsePlaylistEpg = { usePlaylistEpg = it; persistLists(); loadEpgWithStatus() },
-                                        onSelectEpg = { selectedEpgId = it; persistLists(); loadEpgWithStatus() },
-                                        onAddEpg = { name, url -> val newId = "epg_${System.currentTimeMillis()}"; epgSources = epgSources + NamedSource(newId, name, url); selectedEpgId = newId; persistLists(); loadEpgWithStatus() },
+                                        epgSources, selectedEpgId, usePlaylistEpg, detectedPlaylistEpgUrl, isEpgLoading, epgStatusText,
+                                        onRefreshEpgNow = { persistLists(); loadEpgWithStatus(forceRefresh = true) },
+                                        onToggleUsePlaylistEpg = { usePlaylistEpg = it; persistLists(); loadEpgWithStatus(forceRefresh = false) },
+                                        onSelectEpg = { selectedEpgId = it; persistLists(); loadEpgWithStatus(forceRefresh = false) },
+                                        onAddEpg = { name, url -> val id = "epg_${System.currentTimeMillis()}"; epgSources = epgSources + NamedSource(id, name, url); selectedEpgId = id; persistLists(); loadEpgWithStatus(forceRefresh = true) },
                                         onDeleteEpg = { id -> epgSources = epgSources.filterNot { it.id == id }; if (selectedEpgId == id) selectedEpgId = "AUTO_PLAYLIST"; persistLists() },
-                                        vportalUrl = vportalUrl, stalkerUrl = stalkerUrl, stalkerMac = stalkerMac, vportalDiagnostic = vportalDiagnostic,
+                                        vportalUrl, stalkerUrl, stalkerMac, vportalDiagnostic,
                                         onVportalChange = { vportalUrl = it }, onStalkerUrlChange = { stalkerUrl = it }, onStalkerMacChange = { stalkerMac = it },
-                                        onSaveAndReload = { reloadAllData() }, onSettingsImported = { refreshStateFromPrefs() }
+                                        onSaveAndReload = { reloadAllData(forceRefresh = true) }, onSettingsImported = { refreshStateFromPrefs() }
                                     )
                                 }
                             }
@@ -842,9 +729,7 @@ fun PlayerQuickMenuDialog(
                         }
                     }
                 }
-                OutlinedButton(onClick = onOpenSleep, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (sleepMinutesLeft > 0) "⏱ Таймер сна: $sleepMinutesLeft мин" else "⏱ Таймер сна: Выкл", color = theme.text)
-                }
+                OutlinedButton(onClick = onOpenSleep, modifier = Modifier.fillMaxWidth()) { Text(if (sleepMinutesLeft > 0) "⏱ Таймер сна: $sleepMinutesLeft мин" else "⏱ Таймер сна: Выкл", color = theme.text) }
                 if (!isVod) {
                     if (isSmartphone) OutlinedButton(onClick = onOpenChannels, modifier = Modifier.fillMaxWidth()) { Text("📋 Список каналов", color = theme.text) }
                     OutlinedButton(onClick = onOpenTvGuide, modifier = Modifier.fillMaxWidth()) { Text("🗂 Прозрачный ТВ-Гид", color = theme.text) }
@@ -870,7 +755,7 @@ fun QuickChannelPickerDialog(S: Strings, theme: AppThemePalette, channels: List<
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxSize()) {
                     items(filtered, key = { it.id }) { ch ->
                         val isCur = currentChannel?.id == ch.id
-                        Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (isCur) theme.selectedCard else theme.bg).clickable { onSelect(ch) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (isCur) theme.selectedCard else theme.bg).tvFocusHighlight(theme.primary, 10.dp).clickable { onSelect(ch) }.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("${ch.number}", color = theme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.width(36.dp))
                             Text(ch.name, color = theme.text, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
                         }
@@ -886,14 +771,8 @@ fun EpgAndArchiveDialog(
     S: Strings, theme: AppThemePalette, channel: Channel, schedule: List<EpgProgramItem>, reminders: List<ProgramReminder>,
     onDismiss: () -> Unit, onToggleReminder: (EpgProgramItem) -> Unit, onPlayArchive: (EpgProgramItem) -> Unit, onPlayLive: () -> Unit
 ) {
-    val now = System.currentTimeMillis()
-    val channelHasArchive = channel.catchupDays > 0
-    val listState = rememberLazyListState()
-
-    LaunchedEffect(schedule) {
-        val liveIdx = schedule.indexOfFirst { now in it.startMs..it.stopMs }
-        if (liveIdx > 0) listState.scrollToItem((liveIdx - 1).coerceAtLeast(0))
-    }
+    val now = System.currentTimeMillis(); val channelHasArchive = channel.catchupDays > 0; val listState = rememberLazyListState()
+    LaunchedEffect(schedule) { val liveIdx = schedule.indexOfFirst { now in it.startMs..it.stopMs }; if (liveIdx > 0) listState.scrollToItem((liveIdx - 1).coerceAtLeast(0)) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)) {
@@ -907,32 +786,20 @@ fun EpgAndArchiveDialog(
                 }
                 Spacer(Modifier.height(10.dp))
                 if (schedule.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(if (S.isRu) "Для «${channel.name}» программа не найдена." else "No TV guide found.", fontSize = 14.sp, color = theme.subtext)
-                    }
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (S.isRu) "Для «${channel.name}» программа не найдена." else "No TV guide found.", fontSize = 14.sp, color = theme.subtext) }
                 } else {
                     LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
                         items(schedule) { prog ->
                             val isPast = prog.stopMs < now; val isNow = now in prog.startMs..prog.stopMs; val isFuture = prog.startMs > now
-                            val canPlayThisPast = isPast && channelHasArchive
-                            val hasRem = isFuture && reminders.any { it.channelId == channel.id && it.startMs == prog.startMs }
-                            val badgeText = when {
-                                isNow -> "🟢 В ЭФИРЕ"; canPlayThisPast -> "⏪ АРХИВ"; hasRem -> "🔔 НАПОМНЮ"; isFuture -> "🔔 НАПОМНИТЬ"; else -> "ЗАВЕРШЕНО"
-                            }
-                            val badgeColor = when {
-                                isNow -> Color(0xFF10B981); canPlayThisPast -> Color(0xFFF59E0B); hasRem -> Color(0xFF38BDF8); else -> theme.subtext
-                            }
+                            val canPlayThisPast = isPast && channelHasArchive; val hasRem = isFuture && reminders.any { it.channelId == channel.id && it.startMs == prog.startMs }
+                            val badgeText = when { isNow -> "🟢 В ЭФИРЕ"; canPlayThisPast -> "⏪ АРХИВ"; hasRem -> "🔔 НАПОМНЮ"; isFuture -> "🔔 НАПОМНИТЬ"; else -> "ЗАВЕРШЕНО" }
+                            val badgeColor = when { isNow -> Color(0xFF10B981); canPlayThisPast -> Color(0xFFF59E0B); hasRem -> Color(0xFF38BDF8); else -> theme.subtext }
                             Column(
                                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (isNow) theme.selectedCard else theme.bg)
-                                    .border(if (isNow) 1.5.dp else 0.dp, if (isNow) theme.primary else Color.Transparent, RoundedCornerShape(12.dp))
-                                    .clickable(enabled = canPlayThisPast || isNow || isFuture) {
-                                        if (canPlayThisPast) onPlayArchive(prog) else if (isNow) onPlayLive() else if (isFuture) onToggleReminder(prog)
-                                    }.padding(12.dp)
+                                    .tvFocusHighlight(theme.primary, 12.dp).border(if (isNow) 1.5.dp else 0.dp, if (isNow) theme.primary else Color.Transparent, RoundedCornerShape(12.dp))
+                                    .clickable(enabled = canPlayThisPast || isNow || isFuture) { if (canPlayThisPast) onPlayArchive(prog) else if (isNow) onPlayLive() else if (isFuture) onToggleReminder(prog) }.padding(12.dp)
                             ) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text(prog.timeRangeText, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.subtext)
-                                    Text(badgeText, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = badgeColor)
-                                }
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(prog.timeRangeText, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.subtext); Text(badgeText, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = badgeColor) }
                                 Spacer(Modifier.height(4.dp)); Text(prog.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
                             }
                         }
@@ -959,18 +826,13 @@ fun LiveTvScreen(
         }
         if (channels.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(S.noChannels, fontSize = 19.sp, color = theme.subtext); Spacer(Modifier.height(16.dp))
-                    Button(onClick = onOpenSettings) { Text(S.goToSettings) }
-                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) { Text(S.noChannels, fontSize = 19.sp, color = theme.subtext); Spacer(Modifier.height(16.dp)); Button(onClick = onOpenSettings) { Text(S.goToSettings) } }
             }
             return
         }
 
         val favCount = remember(channels, favoriteIds) { channels.count { favoriteIds.contains(it.id) } }
-        val groups = remember(channels, favCount, S) {
-            val list = mutableListOf(S.allGroups); if (favCount > 0) list.add(FAV_GROUP_TAG); list.addAll(channels.map { it.group }.distinct()); list
-        }
+        val groups = remember(channels, favCount, S) { val list = mutableListOf(S.allGroups); if (favCount > 0) list.add(FAV_GROUP_TAG); list.addAll(channels.map { it.group }.distinct()); list }
         var selectedGroup by remember { mutableStateOf(S.allGroups) }
         var searchQuery by remember { mutableStateOf("") }
         LaunchedEffect(favCount) { if (favCount == 0 && selectedGroup == FAV_GROUP_TAG) selectedGroup = S.allGroups }
@@ -991,10 +853,9 @@ fun LiveTvScreen(
             Row(modifier = Modifier.fillMaxWidth().height(215.dp).clip(RoundedCornerShape(16.dp)).background(Color.Black)) {
                 Box(modifier = Modifier.weight(1.3f).fillMaxHeight()) {
                     SmartVideoPlayer(
-                        streamUrl = playUrl, userAgent = currentChannel.userAgent ?: playerDefaultUa,
-                        resizeMode = playerResizeMode, bufferMode = playerBufferMode, useNativeController = false,
-                        reconnectingText = S.reconnecting, playerEngine = if (playerEngine == 2) 0 else playerEngine,
-                        modifier = Modifier.fillMaxSize().clickable { onFullscreen() }
+                        streamUrl = playUrl, userAgent = currentChannel.userAgent ?: playerDefaultUa, resizeMode = playerResizeMode,
+                        bufferMode = playerBufferMode, useNativeController = false, reconnectingText = S.reconnecting,
+                        playerEngine = if (playerEngine == 2) 0 else playerEngine, modifier = Modifier.fillMaxSize().clickable { onFullscreen() }
                     )
                     PlayerClockBadge(clockPosition, currentTimeMs, theme.primary)
                 }
@@ -1003,21 +864,18 @@ fun LiveTvScreen(
                         Text("${currentChannel.number}. ${currentChannel.name}", fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = theme.primary)
                         Text(currentChannel.group, fontSize = 11.sp, color = theme.subtext, maxLines = 1)
                     }
-                    Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).border(1.dp, theme.primary.copy(alpha = 0.45f), RoundedCornerShape(10.dp)).clickable { onOpenEpgDialog(currentChannel) }.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).tvFocusHighlight(theme.primary, 10.dp).border(1.dp, theme.primary.copy(alpha = 0.45f), RoundedCornerShape(10.dp)).clickable { onOpenEpgDialog(currentChannel) }.padding(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (activeArchiveProgram != null) {
                             Text("⏪ Архив: ${activeArchiveProgram.title}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B), maxLines = 2)
                             Text(activeArchiveProgram.timeRangeText, fontSize = 10.sp, color = theme.subtext)
                         } else if (nowProg != null) {
-                            val totalMs = (nowProg.stopMs - nowProg.startMs).coerceAtLeast(1L)
-                            val elapsedMs = (currentTimeMs - nowProg.startMs).coerceIn(0L, totalMs)
+                            val totalMs = (nowProg.stopMs - nowProg.startMs).coerceAtLeast(1L); val elapsedMs = (currentTimeMs - nowProg.startMs).coerceIn(0L, totalMs)
                             Text("📺 ${nowProg.title}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = theme.text, maxLines = 2)
                             LinearProgressIndicator(progress = { (elapsedMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)), color = theme.primary)
                             Text("🕒 ${nowProg.timeRangeText} • ⏪ Архив", fontSize = 10.sp, color = theme.primary, maxLines = 1)
                         } else if (curSchedule.isNotEmpty()) {
                             Text("📅 Расписание (${curSchedule.size} пер.)", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = theme.primary)
-                        } else {
-                            Text(if (S.isRu) "📅 Программа и Архив" else "📅 EPG & Archive", fontSize = 11.sp, color = theme.subtext)
-                        }
+                        } else Text(if (S.isRu) "📅 Программа и Архив" else "📅 EPG & Archive", fontSize = 11.sp, color = theme.subtext)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Button(onClick = onFullscreen, modifier = Modifier.weight(1f).height(36.dp), contentPadding = PaddingValues(4.dp)) {
@@ -1036,16 +894,8 @@ fun LiveTvScreen(
         }
 
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedTextField(
-                value = searchQuery, onValueChange = { searchQuery = it },
-                placeholder = { Text(S.searchHint, color = theme.subtext) },
-                leadingIcon = { Icon(Icons.Default.Search, null, tint = theme.primary) },
-                trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Clear, null) } },
-                singleLine = true, modifier = Modifier.weight(1f).height(52.dp)
-            )
-            IconButton(onClick = onOpenHiddenGroups, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)).background(theme.card)) {
-                Icon(Icons.Default.Tune, null, tint = theme.primary)
-            }
+            OutlinedTextField(value = searchQuery, onValueChange = { searchQuery = it }, placeholder = { Text(S.searchHint, color = theme.subtext) }, leadingIcon = { Icon(Icons.Default.Search, null, tint = theme.primary) }, trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.weight(1f).height(52.dp))
+            IconButton(onClick = onOpenHiddenGroups, modifier = Modifier.size(50.dp).clip(RoundedCornerShape(12.dp)).background(theme.card).tvFocusHighlight(theme.primary, 12.dp)) { Icon(Icons.Default.Tune, null, tint = theme.primary) }
         }
         Spacer(Modifier.height(8.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1061,22 +911,14 @@ fun LiveTvScreen(
                 val isPlaying = currentChannel?.id == ch.id; val isFav = favoriteIds.contains(ch.id)
                 Row(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (isPlaying) theme.selectedCard else theme.card)
-                        .border(if (isPlaying) 2.dp else 0.dp, if (isPlaying) theme.primary else Color.Transparent, RoundedCornerShape(12.dp))
+                        .tvFocusHighlight(theme.primary, 12.dp).border(if (isPlaying) 2.dp else 0.dp, if (isPlaying) theme.primary else Color.Transparent, RoundedCornerShape(12.dp))
                         .clickable { if (isPlaying) onFullscreen() else onSelectChannel(ch) }.padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("${ch.number}", color = theme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.width(40.dp))
-                    if (!ch.logoUrl.isNullOrBlank()) {
-                        AsyncImage(model = ch.logoUrl, contentDescription = ch.name, modifier = Modifier.size(38.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Fit)
-                        Spacer(Modifier.width(10.dp))
-                    }
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(ch.name, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = theme.text)
-                        Text(ch.group, fontSize = 12.sp, color = theme.subtext, maxLines = 1)
-                    }
-                    IconButton(onClick = { onToggleFavorite(ch) }) {
-                        Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, null, tint = if (isFav) Color(0xFFF59E0B) else theme.subtext)
-                    }
+                    if (!ch.logoUrl.isNullOrBlank()) { AsyncImage(model = ch.logoUrl, contentDescription = ch.name, modifier = Modifier.size(38.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Fit); Spacer(Modifier.width(10.dp)) }
+                    Column(modifier = Modifier.weight(1f)) { Text(ch.name, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = theme.text); Text(ch.group, fontSize = 12.sp, color = theme.subtext, maxLines = 1) }
+                    IconButton(onClick = { onToggleFavorite(ch) }) { Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, null, tint = if (isFav) Color(0xFFF59E0B) else theme.subtext) }
                 }
             }
         }
@@ -1099,55 +941,36 @@ fun VodScreen(
             Text(if (S.isRu) "🕒 Продолжить просмотр:" else "🕒 Continue Watching:", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = theme.primary, modifier = Modifier.padding(bottom = 6.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 10.dp)) {
                 items(vodHistory, key = { it.key + it.streamUrl }) { h ->
-                    Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(10.dp), modifier = Modifier.width(155.dp).clickable { onClickHistoryItem(h) }) {
-                        Column(modifier = Modifier.padding(8.dp)) {
-                            Text(h.title, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = theme.text, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("▶ ${formatTimeDuration(h.positionMs)}", fontSize = 11.sp, color = theme.primary, fontWeight = FontWeight.SemiBold)
-                        }
+                    Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(10.dp), modifier = Modifier.width(155.dp).tvFocusHighlight(theme.primary, 10.dp).clickable { onClickHistoryItem(h) }) {
+                        Column(modifier = Modifier.padding(8.dp)) { Text(h.title, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = theme.text, maxLines = 1, overflow = TextOverflow.Ellipsis); Text("▶ ${formatTimeDuration(h.positionMs)}", fontSize = 11.sp, color = theme.primary, fontWeight = FontWeight.SemiBold) }
                     }
                 }
             }
         }
-
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (canGoBack) {
-                Button(onClick = onBackFolder, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.padding(end = 10.dp)) {
-                    Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text(if (S.isRu) "Назад" else "Back")
-                }
-            }
+            if (canGoBack) Button(onClick = onBackFolder, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.padding(end = 10.dp)) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text(if (S.isRu) "Назад" else "Back") }
             Text(folderTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = theme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (noticeMessage.isNotBlank()) {
-            Text(noticeMessage, fontSize = 12.sp, color = Color(0xFFF59E0B), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(8.dp)).background(theme.card).padding(10.dp))
-        }
+        if (noticeMessage.isNotBlank()) Text(noticeMessage, fontSize = 12.sp, color = Color(0xFFF59E0B), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(8.dp)).background(theme.card).padding(10.dp))
         if (movies.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)) {
                     Text(if (S.isRu) "В этом разделе пока пусто" else "No items loaded", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = theme.text)
-                    if (diagnosticLog.isNotBlank()) {
-                        Spacer(Modifier.height(10.dp))
-                        Text(diagnosticLog, fontSize = 12.sp, color = theme.subtext, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(theme.card).padding(12.dp))
-                    }
+                    if (diagnosticLog.isNotBlank()) { Spacer(Modifier.height(10.dp)); Text(diagnosticLog, fontSize = 12.sp, color = theme.subtext, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(theme.card).padding(12.dp)) }
                     Spacer(Modifier.height(16.dp)); Button(onClick = onOpenSettings) { Text(S.goToSettings) }
                 }
             }
             return
         }
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = searchQuery, onValueChange = { searchQuery = it },
-                placeholder = { Text(S.searchHint, color = theme.subtext) },
-                leadingIcon = { Icon(Icons.Default.Search, null, tint = theme.primary) },
-                trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Clear, null) } },
-                singleLine = true, modifier = Modifier.weight(1f).height(52.dp)
-            )
+            OutlinedTextField(value = searchQuery, onValueChange = { searchQuery = it }, placeholder = { Text(S.searchHint, color = theme.subtext) }, leadingIcon = { Icon(Icons.Default.Search, null, tint = theme.primary) }, trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.weight(1f).height(52.dp))
             Button(onClick = { onServerSearch(searchQuery) }, modifier = Modifier.height(52.dp)) { Text(if (S.isRu) "Найти" else "Find") }
         }
         Spacer(Modifier.height(10.dp))
         LazyVerticalGrid(columns = GridCells.Adaptive(minSize = 150.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
             items(filtered, key = { it.id }) { movie ->
                 if (movie.id.startsWith("vp_next_")) LaunchedEffect(movie.id) { if (searchQuery.isBlank() && !isLoadingMore) onAutoLoadMore(movie) }
-                Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().clickable { onClickItem(movie) }) {
+                Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().tvFocusHighlight(theme.primary, 14.dp).clickable { onClickItem(movie) }) {
                     Column(modifier = Modifier.padding(10.dp)) {
                         Box(modifier = Modifier.fillMaxWidth().height(if (movie.isFolder && movie.posterUrl.isNullOrBlank()) 85.dp else 175.dp).clip(RoundedCornerShape(10.dp)).background(theme.bg), contentAlignment = Alignment.Center) {
                             if (!movie.posterUrl.isNullOrBlank()) AsyncImage(model = movie.posterUrl, contentDescription = movie.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
