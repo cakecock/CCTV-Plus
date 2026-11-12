@@ -30,69 +30,50 @@ object GitHubUpdater {
         .followSslRedirects(true)
         .build()
 
+    private fun extractApkFromReleaseJson(json: JSONObject): ReleaseInfo? {
+        val tag = json.optString("tag_name").ifEmpty { json.optString("name") }
+        val notes = json.optString("body", "")
+        val assets = json.optJSONArray("assets") ?: return null
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            val dlUrl = asset.optString("browser_download_url", "")
+            if (dlUrl.endsWith(".apk", ignoreCase = true)) {
+                return ReleaseInfo(tag.ifEmpty { "v1.0" }, dlUrl, notes)
+            }
+        }
+        return null
+    }
+
     suspend fun checkLatestRelease(): Result<ReleaseInfo> = withContext(Dispatchers.IO) {
         runCatching {
-            val candidateRepos = mutableListOf(
+            val candidateRepos = listOf(
                 "$GITHUB_USER/CCTV-Plus",
                 "$GITHUB_USER/CCTV",
                 "$GITHUB_USER/CCTV_Plus",
                 "$GITHUB_USER/MyIPTV"
             )
 
-            runCatching {
-                val userReposReq = Request.Builder()
-                    .url("https://api.github.com/users/$GITHUB_USER/repos")
-                    .header("Accept", "application/vnd.github+json")
-                    .header("User-Agent", "CCTV-Plus-Updater")
-                    .build()
-                client.newCall(userReposReq).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val arr = JSONArray(resp.body?.string() ?: "[]")
-                        for (i in 0 until arr.length()) {
-                            val fullName = arr.getJSONObject(i).optString("full_name")
-                            if (fullName.isNotEmpty() && !candidateRepos.contains(fullName)) {
-                                candidateRepos.add(0, fullName)
-                            }
-                        }
-                    }
-                }
-            }
-
             var foundRelease: ReleaseInfo? = null
 
-            for (repoFullName in candidateRepos.distinct()) {
-                val directVerUrl = "https://raw.githubusercontent.com/$repoFullName/main/version.json"
-                val directReq = Request.Builder().url(directVerUrl).header("User-Agent", "CCTV-Plus-Updater").build()
-                runCatching {
-                    client.newCall(directReq).execute().use { resp ->
-                        if (resp.isSuccessful) {
-                            val obj = JSONObject(resp.body?.string() ?: "{}")
-                            val tag = obj.optString("tag_name", "v1.latest")
-                            val apkUrl = "https://raw.githubusercontent.com/$repoFullName/main/CCTV-Plus.apk"
-                            foundRelease = ReleaseInfo(tag, apkUrl, "Прямое обновление из $repoFullName")
-                        }
-                    }
-                }
-                if (foundRelease != null) break
-
-                val relReq = Request.Builder()
-                    .url("https://api.github.com/repos/$repoFullName/releases/latest")
+            // Способ 1 (Самый надежный): проверяем официальный раздел Releases на GitHub
+            for (repoFullName in candidateRepos) {
+                val listReq = Request.Builder()
+                    .url("https://api.github.com/repos/$repoFullName/releases?per_page=5")
                     .header("Accept", "application/vnd.github+json")
                     .header("User-Agent", "CCTV-Plus-Updater")
                     .build()
 
                 runCatching {
-                    client.newCall(relReq).execute().use { resp ->
+                    client.newCall(listReq).execute().use { resp ->
                         if (resp.isSuccessful) {
-                            val json = JSONObject(resp.body?.string() ?: "{}")
-                            val tag = json.optString("tag_name", "v1.0")
-                            val notes = json.optString("body", "")
-                            val assets = json.optJSONArray("assets")
-                            val apkUrl = if (assets != null && assets.length() > 0) {
-                                assets.getJSONObject(0).optString("browser_download_url", "")
-                            } else ""
-                            if (apkUrl.isNotEmpty()) {
-                                foundRelease = ReleaseInfo(tag, apkUrl, notes)
+                            val arr = JSONArray(resp.body?.string() ?: "[]")
+                            for (i in 0 until arr.length()) {
+                                val relObj = arr.optJSONObject(i) ?: continue
+                                val info = extractApkFromReleaseJson(relObj)
+                                if (info != null) {
+                                    foundRelease = info
+                                    break
+                                }
                             }
                         }
                     }
@@ -100,7 +81,34 @@ object GitHubUpdater {
                 if (foundRelease != null) break
             }
 
-            foundRelease ?: throw IllegalStateException("Сборка не найдена на GitHub.")
+            // Способ 2 (Резервный): проверяем прямой version.json и наличие файла CCTV-Plus.apk
+            if (foundRelease == null) {
+                for (repoFullName in candidateRepos) {
+                    val directVerUrl = "https://raw.githubusercontent.com/$repoFullName/main/version.json"
+                    val apkUrl = "https://raw.githubusercontent.com/$repoFullName/main/CCTV-Plus.apk"
+                    val directReq = Request.Builder().url(directVerUrl).header("User-Agent", "CCTV-Plus-Updater").build()
+                    runCatching {
+                        client.newCall(directReq).execute().use { resp ->
+                            if (resp.isSuccessful) {
+                                val obj = JSONObject(resp.body?.string() ?: "{}")
+                                val tag = obj.optString("tag_name", "").trim()
+                                if (tag.isNotEmpty()) {
+                                    // Проверяем, что сам файл APK действительно доступен по этой ссылке
+                                    val headReq = Request.Builder().url(apkUrl).head().header("User-Agent", "CCTV-Plus-Updater").build()
+                                    client.newCall(headReq).execute().use { headResp ->
+                                        if (headResp.isSuccessful) {
+                                            foundRelease = ReleaseInfo(tag, apkUrl, "Обновление из $repoFullName")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (foundRelease != null) break
+                }
+            }
+
+            foundRelease ?: throw IllegalStateException("Сборка еще не опубликована в Releases. Подождите завершения сборки в Actions.")
         }
     }
 
