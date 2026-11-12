@@ -246,7 +246,13 @@ fun AccordionSettingsScreen(
                 "qr" to S.catQr
             )
             val curSubTitle = subOpts.find { it.first == selectedSourceSubMenu }?.second ?: subOpts.first().second
-            SourceDropdownSelector(if (S.isRu) "Выберите раздел источников:" else "Select Source Section:", curSubTitle, subOpts, theme) { selectedSourceSubMenu = it }
+            SourceDropdownSelector(
+                label = if (S.isRu) "Выберите раздел источников:" else "Select Source Section:",
+                selectedTitle = curSubTitle,
+                options = subOpts,
+                theme = theme,
+                onSelect = { selectedSourceSubMenu = it }
+            )
             HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 4.dp))
 
             when (selectedSourceSubMenu) {
@@ -369,14 +375,26 @@ fun AccordionSettingsScreen(
                 "1" to (if (S.isRu) "📐 Растянуть 16:9 (Fill)" else "📐 Stretch 16:9"),
                 "2" to (if (S.isRu) "📐 Увеличить с обрезкой (Zoom)" else "📐 Zoom Crop")
             )
-            SourceDropdownSelector(if (S.isRu) "Формат изображения:" else "Aspect Ratio:", resizeOpts.find { it.first == playerResizeMode.toString() }?.second ?: resizeOpts.first().second, resizeOpts, theme) { onPlayerResizeChange(it.toIntOrNull() ?: 0) }
+            SourceDropdownSelector(
+                label = if (S.isRu) "Формат изображения:" else "Aspect Ratio:",
+                selectedTitle = resizeOpts.find { it.first == playerResizeMode.toString() }?.second ?: resizeOpts.first().second,
+                options = resizeOpts,
+                theme = theme,
+                onSelect = { onPlayerResizeChange(it.toIntOrNull() ?: 0) }
+            )
 
             val bufOpts = listOf(
                 "0" to (if (S.isRu) "🚀 Быстрый старт (2 сек)" else "🚀 Fast (2s)"),
                 "1" to (if (S.isRu) "⚖️ Сбалансированный (5 сек)" else "⚖️ Balanced (5s)"),
                 "2" to (if (S.isRu) "🛡 Макс. стабильность (12 сек)" else "🛡 Max Stability (12s)")
             )
-            SourceDropdownSelector(if (S.isRu) "Буфер видеоплеера:" else "Buffer Size:", bufOpts.find { it.first == playerBufferMode.toString() }?.second ?: bufOpts[1].second, bufOpts, theme) { onPlayerBufferChange(it.toIntOrNull() ?: 1) }
+            SourceDropdownSelector(
+                label = if (S.isRu) "Буфер видеоплеера:" else "Buffer Size:",
+                selectedTitle = bufOpts.find { it.first == playerBufferMode.toString() }?.second ?: bufOpts[1].second,
+                options = bufOpts,
+                theme = theme,
+                onSelect = { onPlayerBufferChange(it.toIntOrNull() ?: 1) }
+            )
 
             val uaOpts = listOf(
                 "Lavf/60.3.100" to "Lavf / FFmpeg (По умолчанию)",
