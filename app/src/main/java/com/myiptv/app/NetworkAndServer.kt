@@ -30,7 +30,6 @@ import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 import kotlin.concurrent.thread
 
-// Умная нормализация названия канала (убирает HD, FHD, 4K, скобки и пробелы для точного совпадения с EPG)
 fun normalizeChannelKey(raw: String): String {
     var s = raw.lowercase().trim()
     s = s.replace(Regex("\\[.*?\\]|\\(.*?\\)"), " ")
@@ -43,7 +42,7 @@ fun normalizeChannelKey(raw: String): String {
 object NetworkLoader {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(40, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -103,7 +102,6 @@ object NetworkLoader {
                             name = t.substringAfterLast(",").trim()
                             val attrs = attrRegex.findAll(t).associate { it.groupValues[1].lowercase() to it.groupValues[2] }
                             logo = attrs["tvg-logo"]?.takeIf { it.isNotBlank() }
-                            // Берем непустой tvg-id или tvg-name
                             epgId = attrs["tvg-id"]?.takeIf { it.isNotBlank() }
                                 ?: attrs["tvg-name"]?.takeIf { it.isNotBlank() }
                             group = attrs["group-title"]?.takeIf { it.isNotBlank() } ?: group
@@ -115,7 +113,7 @@ object NetworkLoader {
                             val hasCatchupTag = !attrs["catchup"].isNullOrBlank() || !catchupSource.isNullOrBlank()
                             catchupDays = when {
                                 explicitDays != null && explicitDays > 0 -> explicitDays
-                                hasCatchupTag -> 3
+                                hasCatchupTag -> 5
                                 else -> 0
                             }
                         }
@@ -127,8 +125,7 @@ object NetworkLoader {
                                 if (isVod) {
                                     movies.add(VodMovie("m3u_vod_$num", name, group, logo, "", "", "", t))
                                 } else {
-                                    // У каналов TVlider/Edem с личным ключом в потоке архив работает по умолчанию
-                                    val finalCatchup = if (catchupDays > 0) catchupDays else if (t.contains("/iptv/")) 3 else 0
+                                    val finalCatchup = if (catchupDays > 0) catchupDays else if (t.contains("/iptv/")) 5 else 0
                                     channels.add(Channel("ch_$num", num, name, group, logo, t, epgId, ua, finalCatchup, catchupSource))
                                 }
                                 num++
@@ -342,7 +339,6 @@ object NetworkLoader {
         list
     }
 
-    // Быстрый математический разбор дат XMLTV (например: "20261112153000 +0300")
     private fun parseXmlDateFast(raw: String?): Long {
         if (raw.isNullOrBlank() || raw.length < 14) return 0L
         return runCatching {
@@ -371,14 +367,15 @@ object NetworkLoader {
         }.getOrDefault(0L)
     }
 
-    // Полная загрузка телепрограммы без преждевременного обрыва (читает весь файл и захватывает текущий эфир!)
-    suspend fun loadFullEpgSchedule(epgUrl: String): Map<String, List<EpgProgramItem>> = withContext(Dispatchers.IO) {
+    // Загрузка телепрограммы с учетом выбранной глубины архива (1, 3 или 5 дней назад)
+    suspend fun loadFullEpgSchedule(epgUrl: String, archiveDays: Int = 3): Map<String, List<EpgProgramItem>> = withContext(Dispatchers.IO) {
         val rawById = mutableMapOf<String, MutableList<EpgProgramItem>>()
         val aliasToId = mutableMapOf<String, String>()
         val nowMs = System.currentTimeMillis()
-        // Берем окно: 18 часов назад (для архива за сегодня) и 12 часов вперед (текущий эфир + далее)
-        val windowStart = nowMs - 18L * 3600L * 1000L
-        val windowEnd = nowMs + 12L * 3600L * 1000L
+        val daysBack = archiveDays.coerceIn(1, 7).toLong()
+        val windowStart = nowMs - (daysBack * 24L * 3600L * 1000L)
+        val windowEnd = nowMs + (12L * 3600L * 1000L)
+        val maxItemsPerChannel = (daysBack.toInt() * 65) + 40
         val timeFmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
         val shortTimeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
 
@@ -430,7 +427,7 @@ object NetworkLoader {
                             } else if (insideTitle && progChannelId != null && isProgInWindow) {
                                 val title = parser.text.trim()
                                 val list = rawById.getOrPut(progChannelId!!) { mutableListOf() }
-                                if (list.size < 60) {
+                                if (list.size < maxItemsPerChannel) {
                                     val tLabel = "${timeFmt.format(Date(progStart))} - ${shortTimeFmt.format(Date(progStop))}"
                                     list.add(EpgProgramItem(title, progStart, progStop, tLabel))
                                 }
