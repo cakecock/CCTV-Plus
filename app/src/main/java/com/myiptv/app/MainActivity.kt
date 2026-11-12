@@ -5,22 +5,13 @@
 
 package com.myiptv.app
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
-import android.content.Intent
-import android.content.SharedPreferences
-import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,10 +22,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -43,7 +31,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -71,11 +58,6 @@ import java.util.Locale
 
 private const val FAV_GROUP_TAG = "__FAV_CATEGORY__"
 
-fun getAppVersionInfo(context: Context): Pair<String, Long> = runCatching {
-    val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-    (pInfo.versionName ?: "1.0") to pInfo.longVersionCode
-}.getOrDefault("1.0" to 1L)
-
 fun findChannelSchedule(ch: Channel, epgMap: Map<String, List<EpgProgramItem>>): List<EpgProgramItem> {
     if (epgMap.isEmpty()) return emptyList()
     ch.epgId?.let { id ->
@@ -88,13 +70,6 @@ fun findChannelSchedule(ch: Channel, epgMap: Map<String, List<EpgProgramItem>>):
     return epgMap[cleanName] ?: emptyList()
 }
 
-fun findCurrentProgram(ch: Channel, epgMap: Map<String, List<EpgProgramItem>>): EpgProgramItem? {
-    val list = findChannelSchedule(ch, epgMap)
-    if (list.isEmpty()) return null
-    val now = System.currentTimeMillis()
-    return list.find { now in it.startMs..it.stopMs }
-}
-
 class MainActivity : ComponentActivity() {
     private var webServer: SimpleQrWebServer? = null
 
@@ -105,6 +80,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             var isFirstLaunch by remember { mutableStateOf(!prefs.contains("lang_selected")) }
             var isRu by remember { mutableStateOf(prefs.getString("lang", "ru") == "ru") }
+            var deviceType by remember { mutableStateOf(prefs.getString("device_type", "mobile") ?: "mobile") }
+            var controlMode by remember { mutableStateOf(prefs.getString("control_mode", "touch") ?: "touch") }
             var themePalette by remember {
                 mutableStateOf(AppThemePalette.fromId(prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id)))
             }
@@ -149,6 +126,7 @@ class MainActivity : ComponentActivity() {
             var currentVodStream by remember { mutableStateOf<Pair<String, String>?>(null) }
             var isFullscreen by remember { mutableStateOf(false) }
             var epgDialogChannel by remember { mutableStateOf<Channel?>(null) }
+            var showQuickChannelPicker by remember { mutableStateOf(false) }
 
             val scope = rememberCoroutineScope()
 
@@ -156,6 +134,8 @@ class MainActivity : ComponentActivity() {
                 saveNamedList(prefs, "playlists_json", playlists)
                 saveNamedList(prefs, "epgs_json", epgSources)
                 prefs.edit()
+                    .putString("device_type", deviceType)
+                    .putString("control_mode", controlMode)
                     .putString("selected_playlist_id", selectedPlaylistId)
                     .putString("selected_epg_id", selectedEpgId)
                     .putBoolean("use_playlist_epg", usePlaylistEpg)
@@ -188,7 +168,7 @@ class MainActivity : ComponentActivity() {
                     isEpgLoading = false
                     val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
                     epgStatusText = if (loadedSchedule.isNotEmpty()) {
-                        if (isRu) "✅ Обновлено в $timeStr (расписание и архив для ${loadedSchedule.size / 2} каналов)"
+                        if (isRu) "✅ Обновлено в $timeStr (каналов с программой: ${loadedSchedule.size / 2})"
                         else "✅ Updated at $timeStr (${loadedSchedule.size / 2} channels)"
                     } else {
                         if (isRu) "⚠️ Завершено ($timeStr), но передач не найдено"
@@ -236,6 +216,8 @@ class MainActivity : ComponentActivity() {
 
             fun refreshStateFromPrefs() {
                 isRu = prefs.getString("lang", "ru") == "ru"
+                deviceType = prefs.getString("device_type", "mobile") ?: "mobile"
+                controlMode = prefs.getString("control_mode", "touch") ?: "touch"
                 themePalette = AppThemePalette.fromId(prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
                 playlists = loadNamedList(prefs, "playlists_json", "m3u_url", "Основной плейлист")
                 selectedPlaylistId = prefs.getString("selected_playlist_id", playlists.firstOrNull()?.id ?: "") ?: ""
@@ -385,20 +367,51 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
+                    if (showQuickChannelPicker && channels.isNotEmpty()) {
+                        QuickChannelPickerDialog(
+                            S = S,
+                            theme = themePalette,
+                            channels = channels,
+                            currentChannel = currentChannel,
+                            onDismiss = { showQuickChannelPicker = false },
+                            onSelect = { ch ->
+                                if (currentChannel != null && currentChannel?.id != ch.id) previousChannel = currentChannel
+                                activeArchiveStream = null
+                                currentChannel = ch
+                                showQuickChannelPicker = false
+                            }
+                        )
+                    }
+
                     if (isFirstLaunch) {
-                        FirstLaunchLanguageScreen(themePalette) { selectedRu ->
-                            isRu = selectedRu
-                            prefs.edit().putBoolean("lang_selected", true).putString("lang", if (selectedRu) "ru" else "en").apply()
-                            isFirstLaunch = false
-                            currentTab = 2
-                        }
+                        FirstLaunchSetupScreen(
+                            theme = themePalette,
+                            initialRu = isRu,
+                            initialDevice = deviceType,
+                            initialControl = controlMode,
+                            onFinishSetup = { selRu, selDevice, selControl ->
+                                isRu = selRu
+                                deviceType = selDevice
+                                controlMode = selControl
+                                prefs.edit()
+                                    .putBoolean("lang_selected", true)
+                                    .putString("lang", if (selRu) "ru" else "en")
+                                    .putString("device_type", selDevice)
+                                    .putString("control_mode", selControl)
+                                    .apply()
+                                isFirstLaunch = false
+                                currentTab = 2
+                            }
+                        )
                     } else if (isFullscreen && (currentChannel != null || currentVodStream != null)) {
                         BackHandler { isFullscreen = false }
                         val playUrl = currentVodStream?.second ?: activeArchiveStream?.second ?: currentChannel?.streamUrl ?: ""
                         val playTitle = currentVodStream?.first
                             ?: activeArchiveStream?.let { "⏪ Архив: ${it.first}" }
                             ?: currentChannel?.name ?: ""
-                        val resizeLabels = if (isRu) listOf("По размеру", "16:9 Растянуть", "Zoom") else listOf("Fit", "Fill", "Zoom")
+                        val resizeLabels = if (isRu) listOf("По размеру", "16:9", "Zoom") else listOf("Fit", "16:9", "Zoom")
+                        val curHasEpg = currentChannel != null && findChannelSchedule(currentChannel!!, epgScheduleMap).isNotEmpty()
+                        val isSmartphone = deviceType == "mobile"
 
                         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
                             SmartVideoPlayer(
@@ -410,28 +423,41 @@ class MainActivity : ComponentActivity() {
                                 modifier = Modifier.fillMaxSize()
                             )
                             Row(
-                                modifier = Modifier.align(Alignment.TopStart).padding(14.dp).background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier.align(Alignment.TopStart).padding(12.dp).background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Text(playTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, modifier = Modifier.widthIn(max = 260.dp))
+                                Text(playTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp))
+
                                 OutlinedButton(
                                     onClick = {
                                         playerResizeMode = (playerResizeMode + 1) % 3
                                         prefs.edit().putInt("player_resize", playerResizeMode).apply()
                                     },
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                                 ) {
                                     Text("📐 ${resizeLabels[playerResizeMode]}", color = Color.White, fontSize = 12.sp)
                                 }
-                                if (currentChannel != null && currentVodStream == null) {
+
+                                // Кнопки Каналов и Архива в плеере — ТОЛЬКО НА СМАРТФОНЕ (на ТВ скрыты)
+                                if (isSmartphone && currentChannel != null && currentVodStream == null) {
                                     OutlinedButton(
-                                        onClick = { epgDialogChannel = currentChannel },
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                        onClick = { showQuickChannelPicker = true },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                                     ) {
-                                        Text(if (isRu) "📅 Гид / Архив" else "📅 EPG / Archive", color = Color(0xFF10B981), fontSize = 12.sp)
+                                        Text(if (isRu) "📋 Каналы" else "📋 Channels", color = Color(0xFF38BDF8), fontSize = 12.sp)
+                                    }
+                                    if (curHasEpg) {
+                                        OutlinedButton(
+                                            onClick = { epgDialogChannel = currentChannel },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            val txt = if (currentChannel!!.catchupDays > 0) (if (isRu) "⏪ Архив" else "⏪ Archive") else (if (isRu) "📅 Гид" else "📅 EPG")
+                                            Text(txt, color = Color(0xFF10B981), fontSize = 12.sp)
+                                        }
                                     }
                                 }
+
                                 Button(onClick = { isFullscreen = false }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
                                     Text(if (isRu) "Свернуть" else "Exit", fontSize = 12.sp)
                                 }
@@ -502,6 +528,10 @@ class MainActivity : ComponentActivity() {
                                     S = S,
                                     prefs = prefs,
                                     theme = themePalette,
+                                    deviceType = deviceType,
+                                    controlMode = controlMode,
+                                    onDeviceTypeChange = { deviceType = it; persistLists() },
+                                    onControlModeChange = { controlMode = it; persistLists() },
                                     onSelectTheme = { themePalette = it; prefs.edit().putString("theme_id", it.id).apply() },
                                     onToggleLanguage = { isRu = !isRu; prefs.edit().putString("lang", if (isRu) "ru" else "en").apply() },
                                     playerResizeMode = playerResizeMode,
@@ -567,6 +597,46 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+fun QuickChannelPickerDialog(
+    S: Strings,
+    theme: AppThemePalette,
+    channels: List<Channel>,
+    currentChannel: Channel?,
+    onDismiss: () -> Unit,
+    onSelect: (Channel) -> Unit
+) {
+    var q by remember { mutableStateOf("") }
+    val filtered = remember(channels, q) {
+        if (q.isBlank()) channels else channels.filter { it.name.contains(q, ignoreCase = true) }
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)) {
+            Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(if (S.isRu) "📋 Быстрый выбор канала" else "📋 Quick Channel List", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.primary)
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null, tint = theme.text) }
+                }
+                OutlinedTextField(value = q, onValueChange = { q = it }, placeholder = { Text(S.searchHint, color = theme.subtext) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxSize()) {
+                    items(filtered, key = { it.id }) { ch ->
+                        val isCur = currentChannel?.id == ch.id
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                                .background(if (isCur) theme.selectedCard else theme.bg)
+                                .clickable { onSelect(ch) }.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("${ch.number}", color = theme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.width(36.dp))
+                            Text(ch.name, color = theme.text, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun EpgAndArchiveDialog(
     S: Strings,
     theme: AppThemePalette,
@@ -577,18 +647,17 @@ fun EpgAndArchiveDialog(
     onPlayLive: () -> Unit
 ) {
     val now = System.currentTimeMillis()
+    val channelHasArchive = channel.catchupDays > 0
+
     Dialog(onDismissRequest = onDismiss) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = theme.card),
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)
-        ) {
+        Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)) {
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text("📅 ${channel.name}", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = theme.primary, maxLines = 1)
                         Text(
-                            if (S.isRu) "Нажмите на прошедшую передачу для просмотра в Архиве" else "Tap any past program to watch Catch-Up Archive",
+                            if (channelHasArchive) (if (S.isRu) "Архив доступен: нажмите на прошедшую передачу для просмотра" else "Tap any past program to watch Archive")
+                            else (if (S.isRu) "Расписание телепередач (прямой эфир)" else "Channel Schedule (Live only)"),
                             fontSize = 12.sp,
                             color = theme.subtext
                         )
@@ -597,133 +666,42 @@ fun EpgAndArchiveDialog(
                 }
                 Spacer(Modifier.height(10.dp))
 
-                if (schedule.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            if (S.isRu) "Для канала «${channel.name}» программа передач пока не найдена.\nПроверьте статус загрузки EPG в Настройках."
-                            else "No TV guide found for ${channel.name}.",
-                            fontSize = 14.sp,
-                            color = theme.subtext
-                        )
-                    }
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
-                        items(schedule) { prog ->
-                            val isPast = prog.stopMs < now
-                            val isNow = now in prog.startMs..prog.stopMs
-                            val badgeText = when {
-                                isNow -> if (S.isRu) "🟢 СЕЙЧАС В ЭФИРЕ" else "🟢 LIVE NOW"
-                                isPast -> if (S.isRu) "⏪ СМОТРЕТЬ В АРХИВЕ" else "⏪ WATCH ARCHIVE"
-                                else -> if (S.isRu) "🕒 БУДЕТ В ЭФИРЕ" else "🕒 UPCOMING"
-                            }
-                            val badgeColor = when {
-                                isNow -> Color(0xFF10B981)
-                                isPast -> Color(0xFFF59E0B)
-                                else -> theme.subtext
-                            }
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+                    items(schedule) { prog ->
+                        val isPast = prog.stopMs < now
+                        val isNow = now in prog.startMs..prog.stopMs
+                        val canPlayThisPast = isPast && channelHasArchive
 
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isNow) theme.selectedCard else theme.bg)
-                                    .border(if (isNow) 1.5.dp else 0.dp, if (isNow) theme.primary else Color.Transparent, RoundedCornerShape(12.dp))
-                                    .clickable(enabled = isPast || isNow) {
-                                        if (isPast) onPlayArchive(prog) else if (isNow) onPlayLive()
-                                    }
-                                    .padding(12.dp)
-                            ) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text(prog.timeRangeText, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.subtext)
-                                    Text(badgeText, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = badgeColor)
+                        val badgeText = when {
+                            isNow -> if (S.isRu) "🟢 СЕЙЧАС В ЭФИРЕ" else "🟢 LIVE NOW"
+                            canPlayThisPast -> if (S.isRu) "⏪ СМОТРЕТЬ В АРХИВЕ" else "⏪ WATCH ARCHIVE"
+                            isPast -> if (S.isRu) "ЗАВЕРШЕНО" else "ENDED"
+                            else -> if (S.isRu) "🕒 ДАЛЕЕ" else "🕒 UPCOMING"
+                        }
+                        val badgeColor = when {
+                            isNow -> Color(0xFF10B981)
+                            canPlayThisPast -> Color(0xFFF59E0B)
+                            else -> theme.subtext
+                        }
+
+                        Column(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                .background(if (isNow) theme.selectedCard else theme.bg)
+                                .border(if (isNow) 1.5.dp else 0.dp, if (isNow) theme.primary else Color.Transparent, RoundedCornerShape(12.dp))
+                                .clickable(enabled = canPlayThisPast || isNow) {
+                                    if (canPlayThisPast) onPlayArchive(prog) else if (isNow) onPlayLive()
                                 }
-                                Spacer(Modifier.height(4.dp))
-                                Text(prog.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
+                                .padding(12.dp)
+                        ) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(prog.timeRangeText, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.subtext)
+                                Text(badgeText, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = badgeColor)
                             }
+                            Spacer(Modifier.height(4.dp))
+                            Text(prog.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-fun SourceDropdownSelector(
-    label: String,
-    selectedTitle: String,
-    options: List<Pair<String, String>>,
-    theme: AppThemePalette,
-    onSelect: (String) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box(modifier = modifier) {
-        Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(theme.bg)
-                .border(1.dp, theme.primary.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
-                .clickable { expanded = true }.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(label, fontSize = 11.sp, color = theme.subtext)
-                Text(selectedTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = theme.text, maxLines = 1)
-            }
-            Icon(Icons.Default.ArrowDropDown, null, tint = theme.primary)
-        }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, modifier = Modifier.background(theme.card)) {
-            options.forEach { (id, title) ->
-                DropdownMenuItem(text = { Text(title, color = theme.text) }, onClick = { expanded = false; onSelect(id) })
-            }
-        }
-    }
-}
-
-@Composable
-fun ExpandableSectionRow(
-    title: String,
-    isExpanded: Boolean,
-    theme: AppThemePalette,
-    onToggle: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Card(
-        colors = CardDefaults.cardColors(containerColor = theme.card),
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.fillMaxWidth().border(if (isExpanded) 1.5.dp else 0.dp, if (isExpanded) theme.primary else Color.Transparent, RoundedCornerShape(14.dp))
-    ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().clickable { onToggle() }.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = if (isExpanded) theme.primary else theme.text)
-                Icon(if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, null, tint = theme.primary)
-            }
-            if (isExpanded) {
-                HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f))
-                Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
-            }
-        }
-    }
-}
-
-@Composable
-fun FirstLaunchLanguageScreen(theme: AppThemePalette, onSelectLanguage: (Boolean) -> Unit) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(24.dp), modifier = Modifier.padding(24.dp).widthIn(max = 460.dp)) {
-            Column(modifier = Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Default.Language, null, tint = theme.primary, modifier = Modifier.size(60.dp))
-                Spacer(Modifier.height(14.dp))
-                Text("CCTV Plus", fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = theme.primary)
-                Spacer(Modifier.height(6.dp))
-                Text("Выберите язык / Choose Language", fontSize = 17.sp, color = theme.text)
-                Spacer(Modifier.height(24.dp))
-                Button(onClick = { onSelectLanguage(true) }, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("🇷🇺  Русский", fontSize = 18.sp, fontWeight = FontWeight.Bold) }
-                Spacer(Modifier.height(14.dp))
-                OutlinedButton(onClick = { onSelectLanguage(false) }, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("🇬🇧  English", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = theme.text) }
             }
         }
     }
@@ -796,7 +774,13 @@ fun LiveTvScreen(
 
         if (currentChannel != null) {
             val playUrl = activeArchiveStream?.second ?: currentChannel.streamUrl
-            val nowProg = findCurrentProgram(currentChannel, epgScheduleMap)
+            val curSchedule = remember(currentChannel, epgScheduleMap) { findChannelSchedule(currentChannel, epgScheduleMap) }
+            val nowProg = remember(curSchedule) {
+                val now = System.currentTimeMillis()
+                curSchedule.find { now in it.startMs..it.stopMs }
+            }
+            val curHasEpg = curSchedule.isNotEmpty()
+            val curHasArchive = currentChannel.catchupDays > 0 && curHasEpg
 
             Row(modifier = Modifier.fillMaxWidth().height(215.dp).clip(RoundedCornerShape(16.dp)).background(Color.Black)) {
                 Box(modifier = Modifier.weight(1.3f).fillMaxHeight()) {
@@ -823,14 +807,16 @@ fun LiveTvScreen(
                     }
 
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedButton(
-                            onClick = { onOpenEpgDialog(currentChannel) },
-                            modifier = Modifier.fillMaxWidth().height(34.dp),
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
-                        ) {
-                            Icon(Icons.Default.Schedule, null, modifier = Modifier.size(16.dp), tint = theme.primary)
-                            Spacer(Modifier.width(4.dp))
-                            Text(if (S.isRu) "Программа / Архив" else "EPG / Archive", fontSize = 11.sp, maxLines = 1)
+                        if (curHasEpg) {
+                            OutlinedButton(
+                                onClick = { onOpenEpgDialog(currentChannel) },
+                                modifier = Modifier.fillMaxWidth().height(34.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Icon(if (curHasArchive) Icons.Default.History else Icons.Default.EventNote, null, modifier = Modifier.size(16.dp), tint = theme.primary)
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (curHasArchive) (if (S.isRu) "Программа и Архив" else "EPG & Archive") else (if (S.isRu) "Телепрограмма" else "TV Guide"), fontSize = 11.sp, maxLines = 1)
+                            }
                         }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -876,7 +862,13 @@ fun LiveTvScreen(
             items(filtered, key = { it.id }) { ch ->
                 val isPlaying = currentChannel?.id == ch.id
                 val isFav = favoriteIds.contains(ch.id)
-                val nowProg = findCurrentProgram(ch, epgScheduleMap)
+                val chSchedule = findChannelSchedule(ch, epgScheduleMap)
+                val hasEpg = chSchedule.isNotEmpty()
+                val hasArchive = ch.catchupDays > 0 && hasEpg
+                val nowProg = if (hasEpg) {
+                    val now = System.currentTimeMillis()
+                    chSchedule.find { now in it.startMs..it.stopMs }
+                } else null
 
                 Row(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
@@ -899,9 +891,18 @@ fun LiveTvScreen(
                             Text(ch.group, fontSize = 12.sp, color = theme.subtext, maxLines = 1)
                         }
                     }
-                    IconButton(onClick = { onOpenEpgDialog(ch) }) {
-                        Icon(Icons.Default.Schedule, null, tint = theme.primary)
+
+                    // Значок EPG и Архива отображается ТОЛЬКО если у канала есть программа передач!
+                    if (hasEpg) {
+                        IconButton(onClick = { onOpenEpgDialog(ch) }) {
+                            Icon(
+                                imageVector = if (hasArchive) Icons.Default.History else Icons.Default.EventNote,
+                                contentDescription = null,
+                                tint = if (hasArchive) Color(0xFFF59E0B) else theme.primary
+                            )
+                        }
                     }
+
                     IconButton(onClick = { onToggleFavorite(ch) }) {
                         Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, null, tint = if (isFav) Color(0xFFF59E0B) else theme.subtext)
                     }
@@ -1004,554 +1005,6 @@ fun VodScreen(
                     }
                 }
             }
-        }
-    }
-}
-
-@Composable
-fun AccordionSettingsScreen(
-    S: Strings,
-    prefs: SharedPreferences,
-    theme: AppThemePalette,
-    onSelectTheme: (AppThemePalette) -> Unit,
-    onToggleLanguage: () -> Unit,
-    playerResizeMode: Int,
-    playerBufferMode: Int,
-    playerDefaultUa: String,
-    openFullscreenOnTap: Boolean,
-    onPlayerResizeChange: (Int) -> Unit,
-    onPlayerBufferChange: (Int) -> Unit,
-    onPlayerUaChange: (String) -> Unit,
-    onAutoFsChange: (Boolean) -> Unit,
-    playlists: List<NamedSource>,
-    selectedPlaylistId: String,
-    onSelectPlaylist: (String) -> Unit,
-    onAddPlaylist: (String, String) -> Unit,
-    onDeletePlaylist: (String) -> Unit,
-    epgSources: List<NamedSource>,
-    selectedEpgId: String,
-    usePlaylistEpg: Boolean,
-    detectedPlaylistEpgUrl: String?,
-    isEpgLoading: Boolean,
-    epgStatusText: String,
-    onRefreshEpgNow: () -> Unit,
-    onToggleUsePlaylistEpg: (Boolean) -> Unit,
-    onSelectEpg: (String) -> Unit,
-    onAddEpg: (String, String) -> Unit,
-    onDeleteEpg: (String) -> Unit,
-    vportalUrl: String,
-    stalkerUrl: String,
-    stalkerMac: String,
-    vportalDiagnostic: String,
-    onVportalChange: (String) -> Unit,
-    onStalkerUrlChange: (String) -> Unit,
-    onStalkerMacChange: (String) -> Unit,
-    onSaveAndReload: () -> Unit,
-    onSettingsImported: () -> Unit
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val (installedVerName, installedVerCode) = remember { getAppVersionInfo(context) }
-
-    var expandedRow by remember { mutableStateOf(0) }
-    fun toggleRow(idx: Int) { expandedRow = if (expandedRow == idx) -1 else idx }
-
-    var newPlName by remember { mutableStateOf("") }
-    var newPlUrl by remember { mutableStateOf("") }
-    var newEpgName by remember { mutableStateOf("") }
-    var newEpgUrl by remember { mutableStateOf("") }
-
-    var updateStatus by remember { mutableStateOf("") }
-    var downloadPercent by remember { mutableStateOf(-1) }
-    var latestRelease by remember { mutableStateOf<ReleaseInfo?>(null) }
-    var isUpdating by remember { mutableStateOf(false) }
-    var backupStatus by remember { mutableStateOf("") }
-
-    var issueDescription by remember { mutableStateOf("") }
-    var reportStatus by remember { mutableStateOf("") }
-
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(exportAllSettingsToJson(prefs).toByteArray(Charsets.UTF_8))
-                }
-                backupStatus = if (S.isRu) "✅ Настройки успешно сохранены в файл!" else "✅ Settings exported!"
-            }.onFailure { backupStatus = "❌ Ошибка: ${it.localizedMessage}" }
-        }
-    }
-
-    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching {
-                val jsonText = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-                if (importAllSettingsFromJson(prefs, jsonText)) {
-                    backupStatus = if (S.isRu) "✅ Настройки успешно импортированы!" else "✅ Settings imported!"
-                    onSettingsImported()
-                } else backupStatus = "❌ Неверный формат файла"
-            }.onFailure { backupStatus = "❌ Ошибка: ${it.localizedMessage}" }
-        }
-    }
-
-    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // 0. ВИД, 10 ТЕМ И ЯЗЫК
-        ExpandableSectionRow(S.catAppearance, expandedRow == 0, theme, { toggleRow(0) }) {
-            AppThemePalette.entries.forEach { item ->
-                val isChosen = item == theme
-                Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(item.bg)
-                        .border(if (isChosen) 2.5.dp else 1.dp, if (isChosen) item.primary else item.subtext, RoundedCornerShape(12.dp))
-                        .clickable { onSelectTheme(item) }.padding(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(24.dp).clip(CircleShape).background(item.primary))
-                        Spacer(Modifier.width(12.dp))
-                        Text(if (S.isRu) item.titleRu else item.titleEn, fontWeight = FontWeight.Bold, color = item.text)
-                    }
-                    if (isChosen) Icon(Icons.Default.Check, null, tint = item.primary)
-                }
-            }
-            Button(onClick = onToggleLanguage, modifier = Modifier.fillMaxWidth().height(50.dp)) {
-                Icon(Icons.Default.Language, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "Язык: Русский 🇷🇺 (Сменить на EN)" else "Language: English 🇬🇧 (Switch to RU)")
-            }
-        }
-
-        // 1. НАСТРОЙКИ ВИДЕОПЛЕЕРА
-        ExpandableSectionRow(S.catPlayer, expandedRow == 1, theme, { toggleRow(1) }) {
-            val resizeOpts = listOf(
-                "0" to (if (S.isRu) "📐 По размеру экрана (Fit — без обрезки)" else "📐 Fit Screen"),
-                "1" to (if (S.isRu) "📐 Растянуть на весь экран (16:9 Fill)" else "📐 Stretch 16:9 Fill"),
-                "2" to (if (S.isRu) "📐 Заполнить с обрезкой краев (Zoom)" else "📐 Zoom Crop")
-            )
-            SourceDropdownSelector(
-                label = if (S.isRu) "Формат изображения (Пропорции):" else "Aspect Ratio:",
-                selectedTitle = resizeOpts.find { it.first == playerResizeMode.toString() }?.second ?: resizeOpts.first().second,
-                options = resizeOpts,
-                theme = theme,
-                onSelect = { onPlayerResizeChange(it.toIntOrNull() ?: 0) }
-            )
-
-            val bufOpts = listOf(
-                "0" to (if (S.isRu) "🚀 Быстрый старт (Буфер 2 сек)" else "🚀 Fast Start (2s Buffer)"),
-                "1" to (if (S.isRu) "⚖️ Сбалансированный (Буфер 5 сек)" else "⚖️ Balanced (5s Buffer)"),
-                "2" to (if (S.isRu) "🛡 Макс. стабильность (Буфер 12 сек — от зависаний)" else "🛡 Max Stability (12s Buffer)")
-            )
-            SourceDropdownSelector(
-                label = if (S.isRu) "Размер буфера видеоплеера:" else "Video Buffer Size:",
-                selectedTitle = bufOpts.find { it.first == playerBufferMode.toString() }?.second ?: bufOpts[1].second,
-                options = bufOpts,
-                theme = theme,
-                onSelect = { onPlayerBufferChange(it.toIntOrNull() ?: 1) }
-            )
-
-            val uaOpts = listOf(
-                "Lavf/60.3.100" to "Lavf / FFmpeg (По умолчанию)",
-                "Mozilla/5.0 (SmartHub; SMART-TV) OttPlayer/2.0" to "OttPlayer SmartTV",
-                "VLC/3.0.20 LibVLC/3.0.20" to "VLC Media Player",
-                "TiviMate/4.7.0 (Android TV)" to "TiviMate Android TV",
-                "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200" to "MAG250 Set-Top Box"
-            )
-            SourceDropdownSelector(
-                label = if (S.isRu) "Представляться серверу как (User-Agent):" else "Default User-Agent:",
-                selectedTitle = uaOpts.find { it.first == playerDefaultUa }?.second ?: playerDefaultUa,
-                options = uaOpts,
-                theme = theme,
-                onSelect = { onPlayerUaChange(it) }
-            )
-
-            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(if (S.isRu) "Открывать канал сразу на весь экран при нажатии" else "Open channel in fullscreen on tap", fontWeight = FontWeight.Bold, color = theme.text, modifier = Modifier.weight(1f))
-                Switch(checked = openFullscreenOnTap, onCheckedChange = onAutoFsChange)
-            }
-        }
-
-        // 2. ПЛЕЙЛИСТЫ M3U
-        ExpandableSectionRow("${S.catPlaylists} (${playlists.size})", expandedRow == 2, theme, { toggleRow(2) }) {
-            if (playlists.isNotEmpty()) {
-                val curName = playlists.find { it.id == selectedPlaylistId }?.name ?: playlists.first().name
-                SourceDropdownSelector(S.activePlaylistLabel, "📺 $curName", playlists.map { it.id to it.name }, theme, onSelectPlaylist)
-            }
-            OutlinedTextField(value = newPlName, onValueChange = { newPlName = it }, label = { Text(S.addSourceName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(
-                value = newPlUrl,
-                onValueChange = { newPlUrl = it },
-                label = { Text(S.addSourceUrl) },
-                trailingIcon = { if (newPlUrl.isNotEmpty()) IconButton(onClick = { newPlUrl = "" }) { Icon(Icons.Default.Clear, null) } },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Button(
-                onClick = {
-                    if (newPlUrl.isNotBlank()) {
-                        onAddPlaylist(newPlName.trim().ifEmpty { "Плейлист ${playlists.size + 1}" }, newPlUrl.trim())
-                        newPlName = ""; newPlUrl = ""
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text(S.addBtn, fontWeight = FontWeight.Bold) }
-
-            playlists.forEach { pl ->
-                Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(pl.name, fontWeight = FontWeight.Bold, color = theme.text)
-                        Text(pl.url, fontSize = 12.sp, color = theme.subtext, maxLines = 1)
-                    }
-                    IconButton(onClick = { onDeletePlaylist(pl.id) }) { Icon(Icons.Default.Delete, null, tint = Color(0xFFEF4444)) }
-                }
-            }
-        }
-
-        // 3. ТЕЛЕПРОГРАММА EPG
-        ExpandableSectionRow(S.catEpg, expandedRow == 3, theme, { toggleRow(3) }) {
-            Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(theme.bg).border(1.dp, theme.primary.copy(alpha = 0.4f), RoundedCornerShape(12.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (S.isRu) "Состояние телепрограммы (EPG):" else "EPG Status:", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = theme.primary)
-                if (isEpgLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(6.dp), color = theme.primary)
-                Text(epgStatusText, fontSize = 13.sp, color = theme.text)
-                Button(onClick = onRefreshEpgNow, enabled = !isEpgLoading, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.Refresh, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (S.isRu) "🔄 Обновить телепрограмму сейчас" else "🔄 Refresh EPG Now", fontWeight = FontWeight.Bold)
-                }
-            }
-            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(S.usePlaylistEpgSwitch, fontWeight = FontWeight.Bold, color = theme.text)
-                    if (!detectedPlaylistEpgUrl.isNullOrBlank()) Text("EPG: $detectedPlaylistEpgUrl", fontSize = 12.sp, color = theme.primary)
-                }
-                Switch(checked = usePlaylistEpg, onCheckedChange = onToggleUsePlaylistEpg)
-            }
-            val epgOpts = listOf("AUTO_PLAYLIST" to S.epgFromPlaylistOption) + epgSources.map { it.id to it.name }
-            val curEpg = epgOpts.find { it.first == selectedEpgId }?.second ?: S.epgFromPlaylistOption
-            SourceDropdownSelector(S.activeEpgLabel, curEpg, epgOpts, theme, onSelectEpg)
-
-            OutlinedTextField(value = newEpgName, onValueChange = { newEpgName = it }, label = { Text(S.addSourceName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(
-                value = newEpgUrl,
-                onValueChange = { newEpgUrl = it },
-                label = { Text(S.addSourceUrl) },
-                trailingIcon = { if (newEpgUrl.isNotEmpty()) IconButton(onClick = { newEpgUrl = "" }) { Icon(Icons.Default.Clear, null) } },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Button(
-                onClick = {
-                    if (newEpgUrl.isNotBlank()) {
-                        onAddEpg(newEpgName.trim().ifEmpty { "EPG ${epgSources.size + 1}" }, newEpgUrl.trim())
-                        newEpgName = ""; newEpgUrl = ""
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text(S.addBtn, fontWeight = FontWeight.Bold) }
-
-            epgSources.forEach { epg ->
-                Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(epg.name, fontWeight = FontWeight.Bold, color = theme.text)
-                        Text(epg.url, fontSize = 12.sp, color = theme.subtext, maxLines = 1)
-                    }
-                    IconButton(onClick = { onDeleteEpg(epg.id) }) { Icon(Icons.Default.Delete, null, tint = Color(0xFFEF4444)) }
-                }
-            }
-        }
-
-        // 4. ПОРТАЛЫ (VPORTAL И STALKER)
-        ExpandableSectionRow(S.catPortals, expandedRow == 4, theme, { toggleRow(4) }) {
-            Text("🎬 VPortal (TVlider / iLook)", fontWeight = FontWeight.Bold, color = theme.primary)
-            OutlinedTextField(
-                value = vportalUrl,
-                onValueChange = onVportalChange,
-                label = { Text("portal::[key:...]http://.../api/v1/") },
-                trailingIcon = { if (vportalUrl.isNotEmpty()) IconButton(onClick = { onVportalChange("") }) { Icon(Icons.Default.Clear, null) } },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Text("📡 Stalker Portal", fontWeight = FontWeight.Bold, color = theme.primary)
-            OutlinedTextField(
-                value = stalkerUrl,
-                onValueChange = onStalkerUrlChange,
-                label = { Text("http://.../stalker_portal/c/") },
-                trailingIcon = { if (stalkerUrl.isNotEmpty()) IconButton(onClick = { onStalkerUrlChange("") }) { Icon(Icons.Default.Clear, null) } },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            OutlinedTextField(value = stalkerMac, onValueChange = onStalkerMacChange, label = { Text("MAC (00:1A:79:XX:XX:XX)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Button(onClick = onSaveAndReload, modifier = Modifier.fillMaxWidth().height(50.dp)) { Text(S.saveAndReloadBtn, fontWeight = FontWeight.Bold) }
-
-            if (vportalDiagnostic.isNotBlank()) {
-                Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Диагностика VPortal:", fontWeight = FontWeight.Bold, color = theme.primary)
-                    Text(vportalDiagnostic, fontSize = 12.sp, color = theme.text)
-                    OutlinedButton(onClick = {
-                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(ClipData.newPlainText("VPortalLog", vportalDiagnostic))
-                    }) {
-                        Icon(Icons.Default.ContentCopy, null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(S.copyLogBtn)
-                    }
-                }
-            }
-        }
-
-        // 5. QR-ПУЛЬТ ДЛЯ ТЕЛЕФОНА
-        ExpandableSectionRow(S.catQr, expandedRow == 5, theme, { toggleRow(5) }) {
-            val localIp = remember { getDeviceLocalIp() }
-            val remoteUrl = "http://$localIp:8989"
-            val qrBitmap = remember(remoteUrl) { generateQrBitmap(remoteUrl, 360) }
-            Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                if (qrBitmap != null) {
-                    Image(bitmap = qrBitmap.asImageBitmap(), contentDescription = "QR", modifier = Modifier.size(180.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).padding(8.dp))
-                }
-                Spacer(Modifier.height(10.dp))
-                Text("🌐 $remoteUrl", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = theme.primary)
-            }
-        }
-
-        // 6. ИМПОРТ И ЭКСПОРТ НАСТРОЕК
-        ExpandableSectionRow(S.catBackup, expandedRow == 6, theme, { toggleRow(6) }) {
-            Button(onClick = { exportLauncher.launch("CCTV-Plus-Backup.json") }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.UploadFile, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "📤 Экспортировать настройки в файл (.json)" else "📤 Export Settings to File (.json)")
-            }
-            Button(onClick = { importLauncher.launch(arrayOf("application/json", "*/*")) }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Download, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "📥 Импортировать настройки из файла (.json)" else "📥 Import Settings from File (.json)")
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = {
-                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(ClipData.newPlainText("CCTVBackup", exportAllSettingsToJson(prefs)))
-                        backupStatus = if (S.isRu) "✅ Скопировано в буфер обмена!" else "✅ Copied to clipboard!"
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text(if (S.isRu) "📋 Копировать" else "📋 Copy") }
-
-                OutlinedButton(
-                    onClick = {
-                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        val clip = cm.primaryClip?.getItemAt(0)?.text?.toString() ?: ""
-                        if (importAllSettingsFromJson(prefs, clip)) {
-                            backupStatus = if (S.isRu) "✅ Восстановлено из буфера!" else "✅ Restored from clipboard!"
-                            onSettingsImported()
-                        } else backupStatus = "❌ В буфере нет настроек CCTV Plus"
-                    },
-                    modifier = Modifier.weight(1f)
-                ) { Text(if (S.isRu) "📋 Вставить" else "📋 Paste") }
-            }
-            if (backupStatus.isNotBlank()) {
-                Text(backupStatus, fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
-            }
-        }
-
-        // 7. СПИСОК ИЗМЕНЕНИЙ (CHANGELOG)
-        ExpandableSectionRow(S.catChangelog, expandedRow == 7, theme, { toggleRow(7) }) {
-            AppChangelogHistory.forEachIndexed { idx, rel ->
-                val verTitle = if (idx == 0 || rel.version == "CURRENT") {
-                    "v$installedVerName (Build #$installedVerCode • Текущая)"
-                } else {
-                    rel.version
-                }
-                Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(verTitle, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = theme.primary)
-                        Text(rel.date, fontSize = 12.sp, color = theme.subtext)
-                    }
-                    val items = if (S.isRu) rel.changesRu else rel.changesEn
-                    items.forEach { line ->
-                        Text(line, fontSize = 13.sp, color = theme.text)
-                    }
-                }
-            }
-        }
-
-        // 8. ЛИЦЕНЗИЯ И УСЛОВИЯ ИСПОЛЬЗОВАНИЯ
-        ExpandableSectionRow(S.catLicense, expandedRow == 8, theme, { toggleRow(8) }) {
-            val items = if (S.isRu) LicenseItemsRu else LicenseItemsEn
-            items.forEach { paragraph ->
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp)) {
-                    Text(paragraph, fontSize = 13.sp, color = theme.text)
-                }
-            }
-        }
-
-        // 9. ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ
-        ExpandableSectionRow(S.catPrivacy, expandedRow == 9, theme, { toggleRow(9) }) {
-            val items = if (S.isRu) PrivacyItemsRu else PrivacyItemsEn
-            items.forEach { paragraph ->
-                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp)) {
-                    Text(paragraph, fontSize = 13.sp, color = theme.text)
-                }
-            }
-        }
-
-        // 10. СООБЩИТЬ О ПРОБЛЕМЕ (ОБРАТНАЯ СВЯЗЬ)
-        ExpandableSectionRow(S.catReportIssue, expandedRow == 10, theme, { toggleRow(10) }) {
-            Text(
-                text = if (S.isRu) "Опишите проблему, и приложение сформирует безопасный технический отчет (ваши ключи подписки автоматически скрываются звездочками ***):"
-                else "Describe the issue below to generate a safe diagnostic report (private keys are automatically masked):",
-                fontSize = 13.sp,
-                color = theme.subtext
-            )
-            OutlinedTextField(
-                value = issueDescription,
-                onValueChange = { issueDescription = it },
-                label = { Text(if (S.isRu) "Что именно пошло не так?" else "Describe the problem...") },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Button(
-                onClick = {
-                    val reportText = buildString {
-                        appendLine("=== CCTV Plus Bug Report ===")
-                        appendLine("App Version: v$installedVerName (Build #$installedVerCode)")
-                        appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, SDK ${Build.VERSION.SDK_INT})")
-                        appendLine("Theme: ${theme.id} | Resize: $playerResizeMode | Buffer: $playerBufferMode")
-                        appendLine("Playlists count: ${playlists.size} | EPG Status: $epgStatusText")
-                        appendLine("VPortal Diag: ${maskSensitiveKeys(vportalDiagnostic)}")
-                        appendLine("User Comment: ${issueDescription.ifBlank { "No comment" }}")
-                    }
-                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cm.setPrimaryClip(ClipData.newPlainText("CCTVBugReport", reportText))
-                    reportStatus = if (S.isRu) "✅ Тех. отчет скопирован в буфер! Нажмите кнопку GitHub ниже, чтобы отправить его." else "✅ Report copied to clipboard!"
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.BugReport, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "📋 Скопировать тех. отчет для разработчика" else "📋 Copy Safe Diagnostic Report", fontWeight = FontWeight.Bold)
-            }
-            OutlinedButton(
-                onClick = {
-                    runCatching {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/cakecock")).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.OpenInNew, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "🌐 Открыть GitHub разработчика (cakecock)" else "🌐 Open Developer GitHub (cakecock)")
-            }
-            if (reportStatus.isNotBlank()) {
-                Text(reportStatus, fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
-            }
-        }
-
-        // 11. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ
-        ExpandableSectionRow(if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)", expandedRow == 11, theme, { toggleRow(11) }) {
-            Text(
-                text = if (S.isRu) "Установленная версия: v$installedVerName (Build #$installedVerCode)" else "Installed version: v$installedVerName (Build #$installedVerCode)",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = theme.subtext
-            )
-            Button(
-                onClick = {
-                    scope.launch {
-                        isUpdating = true
-                        downloadPercent = -1
-                        updateStatus = if (S.isRu) "🔍 Проверяем свежую сборку на GitHub..." else "🔍 Checking GitHub..."
-                        val res = GitHubUpdater.checkLatestRelease()
-                        isUpdating = false
-                        res.onSuccess { info ->
-                            latestRelease = info
-                            updateStatus = if (S.isRu) "✅ На GitHub доступна сборка: ${info.versionTag}" else "✅ Available on GitHub: ${info.versionTag}"
-                        }.onFailure { err ->
-                            updateStatus = "❌ ${err.localizedMessage}"
-                        }
-                    }
-                },
-                enabled = !isUpdating,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.SystemUpdate, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "Проверить наличие обновлений" else "Check for Updates")
-            }
-
-            if (isUpdating) {
-                if (downloadPercent in 0..100) {
-                    LinearProgressIndicator(
-                        progress = { downloadPercent / 100f },
-                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                        color = theme.primary
-                    )
-                } else {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(6.dp), color = theme.primary)
-                }
-            }
-
-            if (updateStatus.isNotBlank()) {
-                Text(updateStatus, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
-            }
-
-            if (latestRelease != null) {
-                Button(
-                    onClick = {
-                        val info = latestRelease ?: return@Button
-                        scope.launch {
-                            isUpdating = true
-                            downloadPercent = 0
-                            updateStatus = if (S.isRu) "⏳ Подготовка к скачиванию ${info.versionTag}..." else "⏳ Starting download..."
-                            val dl = GitHubUpdater.downloadAndInstall(context, info.downloadUrl) { pct, dlMb, totMb ->
-                                downloadPercent = pct
-                                updateStatus = if (S.isRu) {
-                                    "⏳ Скачивание обновления: $pct% ($dlMb МБ из $totMb МБ)"
-                                } else {
-                                    "⏳ Downloading update: $pct% ($dlMb MB / $totMb MB)"
-                                }
-                            }
-                            isUpdating = false
-                            dl.onSuccess {
-                                updateStatus = if (S.isRu) "✅ Файл скачан (100%)! Открыто окно установки." else "✅ Downloaded (100%)! Installer opened."
-                            }.onFailure { err ->
-                                updateStatus = "❌ Ошибка установки: ${err.localizedMessage}"
-                            }
-                        }
-                    },
-                    enabled = !isUpdating,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.CloudDownload, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text(if (S.isRu) "⬇️ Скачать и установить ${latestRelease!!.versionTag}" else "⬇️ Download & Install ${latestRelease!!.versionTag}", fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-
-        // ПОДВАЛ НАСТРОЕК: ПОДПИСЬ РАЗРАБОТЧИКА И НОМЕР ВЕРСИИ
-        Spacer(Modifier.height(6.dp))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(theme.card)
-                .border(1.dp, theme.primary.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
-                .padding(vertical = 16.dp, horizontal = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "📺 CCTV Plus • v$installedVerName (Build #$installedVerCode)",
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = 15.sp,
-                color = theme.primary
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = if (S.isRu) "👨‍💻 Разработчик: cakecock © 2026" else "👨‍💻 Developer: cakecock © 2026",
-                fontWeight = FontWeight.Medium,
-                fontSize = 13.sp,
-                color = theme.subtext
-            )
         }
     }
 }
