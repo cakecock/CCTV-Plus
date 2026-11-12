@@ -27,13 +27,6 @@ data class EpgProgramItem(
     val timeRangeText: String
 )
 
-data class PlayerSettingsConfig(
-    val resizeMode: Int = 0, // 0 = Fit, 1 = Fill (Растянуть), 2 = Zoom (Обрезка)
-    val bufferMode: Int = 1, // 0 = Быстрый (2с), 1 = Средний (5с), 2 = Большой (12с)
-    val defaultUserAgent: String = "Lavf/60.3.100",
-    val openFullscreenOnTap: Boolean = false
-)
-
 data class VodMovie(
     val id: String,
     val title: String,
@@ -66,16 +59,16 @@ val AppChangelogHistory = listOf(
         version = "CURRENT",
         date = "12.11.2026",
         changesRu = listOf(
-            "📅 Добавлено интерактивное окно «Телепрограмма и Архив (Catch-Up)»: просмотр расписания канала и запуск прошедших передач в записи одним нажатием.",
-            "🔍 Улучшена привязка телепрограммы (EPG): автоматическое сопоставление каналов как по ID, так и по названию канала.",
-            "⚙️ Добавлен раздел «Настройки видеоплеера»: выбор формата экрана (По размеру / Растянуть 16:9 / Увеличить), размер буфера (Быстрый / Средний / Большой), выбор User-Agent и кнопка пропорций прямо в полноэкранном плеере.",
-            "🔢 Полная синхронизация номера версии между плашкой разработчика и верхним пунктом Чейнжлога."
+            "⚖️ Добавлен раздел «Лицензия и Условия использования» (правовая информация и лицензии открытых компонентов).",
+            "🔒 Добавлен раздел «Политика конфиденциальности» (информация о локальном хранении ключей и отсутствии слежки).",
+            "🐞 Добавлен раздел «Сообщить о проблеме» с генератором безопасного технического отчета об устройстве (ключи автоматически скрываются звездочками) и быстрым переходом на GitHub.",
+            "📅 Добавлено интерактивное окно «Телепрограмма и Архив (Catch-Up)» и расширенные настройки видеоплеера."
         ),
         changesEn = listOf(
-            "📅 Added interactive TV Guide & Catch-Up Archive window: browse channel schedule and play past broadcasts.",
-            "🔍 Improved EPG matching by both channel ID and display name.",
-            "⚙️ Added Video Player Settings: Aspect Ratio (Fit / Fill / Zoom), Buffer size, User-Agent, and quick aspect ratio button in fullscreen.",
-            "🔢 Synchronized version number between the developer badge and Changelog."
+            "⚖️ Added License & Terms of Use section.",
+            "🔒 Added Privacy Policy section (100% local storage & zero tracking guarantee).",
+            "🐞 Added Report an Issue section with safe diagnostic report generator (auto-masks private keys) and direct GitHub link.",
+            "📅 Added interactive TV Guide & Catch-Up Archive window and advanced video player settings."
         )
     ),
     ChangelogRelease(
@@ -104,7 +97,38 @@ val AppChangelogHistory = listOf(
     )
 )
 
-// Формирование ссылки на архивную передачу (Catch-Up / Timeshift)
+val LicenseItemsRu = listOf(
+    "1. Назначение программы: Приложение «CCTV Plus» является исключительно программным медиаплеером (оболочкой для воспроизведения потокового видео) и предоставляется по принципу «как есть» (AS IS).",
+    "2. Отсутствие встроенного контента: Разработчик (cakecock) НЕ предоставляет, НЕ хранит, НЕ ретранслирует и НЕ продает телеканалы, фильмы, сериалы или плейлисты. Приложение не содержит встроенных медиа-источников.",
+    "3. Ответственность пользователя: Все ссылки на плейлисты (M3U/M3U8), порталы (VPortal, Stalker) и телепрограмму (EPG) добавляются пользователем самостоятельно. Пользователь несет полную ответственность за наличие прав на просмотр используемых им источников.",
+    "4. Компоненты с открытым кодом: В составе приложения используются библиотеки AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil и ZXing, распространяемые под лицензией Apache License 2.0.",
+    "5. Авторские права: © 2026 cakecock. Все права на исходный код и дизайн оболочки CCTV Plus защищены."
+)
+
+val LicenseItemsEn = listOf(
+    "1. Software Purpose: 'CCTV Plus' is strictly a media player application (a software shell for streaming playback) provided 'AS IS'.",
+    "2. No Built-in Content: The developer (cakecock) does NOT provide, host, stream, or distribute any TV channels, movies, series, or playlists. The application contains zero built-in media sources.",
+    "3. User Responsibility: All playlist URLs (M3U/M3U8), portal credentials (VPortal, Stalker), and EPG links are configured solely by the user. The user is responsible for ensuring they have legal rights to access their configured streams.",
+    "4. Open Source Licenses: This app uses AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil, and ZXing under the Apache License 2.0.",
+    "5. Copyright: © 2026 cakecock. All rights reserved."
+)
+
+val PrivacyItemsRu = listOf(
+    "1. 100% локальное хранение данных: Все ваши настройки, ссылки на плейлисты, ключи доступа VPortal, MAC-адреса и список избранных каналов хранятся исключительно во внутренней защищенной памяти вашего устройства.",
+    "2. Отсутствие слежки и рекламы: Приложение CCTV Plus НЕ собирает персональные данные, НЕ отслеживает историю ваших просмотров, НЕ содержит рекламных SDK и НЕ передает ваши личные ключи на сторонние серверы.",
+    "3. Прямые сетевые соединения: Доступ к интернету используется только для прямого обращения вашего устройства к указанным вами серверам IPTV/EPG, а также к официальному репозиторию GitHub (github.com/cakecock) при проверке обновлений.",
+    "4. Безопасность QR-Пульта: Встроенный веб-сервер быстрой настройки работает исключительно внутри вашей домашней сети Wi-Fi и недоступен из внешней сети Интернет.",
+    "5. Защита при отправке отчетов: При копировании технического отчета в разделе «Сообщить о проблеме» ваши личные ключи подписки автоматически маскируются звездочками (***)."
+)
+
+val PrivacyItemsEn = listOf(
+    "1. 100% Local Storage: All your settings, playlist links, VPortal keys, MAC addresses, and favorite channels are stored exclusively in your device's internal storage.",
+    "2. Zero Tracking & Zero Ads: CCTV Plus does NOT collect personal data, does NOT track your viewing history, contains NO advertising SDKs, and NEVER sends your private keys to third-party servers.",
+    "3. Direct Network Connections: Internet access is used solely to connect directly from your device to your configured IPTV/EPG servers and to GitHub (github.com/cakecock) when checking for app updates.",
+    "4. QR Remote Security: The built-in QR setup server runs strictly within your local home Wi-Fi network and is inaccessible from the public internet.",
+    "5. Safe Bug Reports: When generating a diagnostic report in 'Report an Issue', your private subscription keys are automatically masked with asterisks (***)."
+)
+
 fun buildArchiveStreamUrl(channel: Channel, startMs: Long, stopMs: Long): String {
     val startSec = startMs / 1000L
     val nowSec = System.currentTimeMillis() / 1000L
@@ -176,6 +200,9 @@ data class Strings(
     val catQr: String,
     val catBackup: String,
     val catChangelog: String,
+    val catLicense: String,
+    val catPrivacy: String,
+    val catReportIssue: String,
     val activePlaylistLabel: String,
     val activeEpgLabel: String,
     val epgFromPlaylistOption: String,
@@ -209,6 +236,9 @@ val RuStrings = Strings(
     catQr = "📱 QR-Пульт (Ввод с телефона)",
     catBackup = "💾 Импорт и Экспорт настроек",
     catChangelog = "📜 Список изменений (Changelog)",
+    catLicense = "⚖️ Лицензия и Условия",
+    catPrivacy = "🔒 Конфиденциальность",
+    catReportIssue = "🐞 Сообщить о проблеме",
     activePlaylistLabel = "Активный плейлист:",
     activeEpgLabel = "Активный источник EPG:",
     epgFromPlaylistOption = "🔄 Автоматически из плейлиста (url-tvg)",
@@ -242,6 +272,9 @@ val EnStrings = Strings(
     catQr = "📱 QR Remote Loader",
     catBackup = "💾 Backup (Import & Export)",
     catChangelog = "📜 Changelog (What's New)",
+    catLicense = "⚖️ License & Terms",
+    catPrivacy = "🔒 Privacy Policy",
+    catReportIssue = "🐞 Report an Issue",
     activePlaylistLabel = "Active Playlist:",
     activeEpgLabel = "Active EPG Source:",
     epgFromPlaylistOption = "🔄 Auto from Playlist (url-tvg)",
@@ -252,6 +285,12 @@ val EnStrings = Strings(
     saveAndReloadBtn = "🔄 Save & Reload All",
     copyLogBtn = "📋 Copy VPortal Diagnostic Log"
 )
+
+fun maskSensitiveKeys(text: String): String {
+    return text
+        .replace(Regex("\\[key:[^\\]]+\\]"), "[key:***HIDDEN***]")
+        .replace(Regex("\"key\"\\s*:\\s*\"[^\"]+\""), "\"key\":\"***HIDDEN***\"")
+}
 
 fun loadNamedList(prefs: SharedPreferences, jsonKey: String, legacySingleKey: String, defaultName: String): List<NamedSource> {
     val raw = prefs.getString(jsonKey, null)
