@@ -6,7 +6,7 @@
 
 ## ⬇️ Скачать приложение / Download APK
 
-👉 **[Скачать последнюю версию CCTV Plus (APK) / Download Latest Release](https://github.com/cakecock/MyIPTV/releases/latest)**
+👉 **[Скачать последнюю версию CCTV Plus (APK) / Download Latest Release]([https://github.com/cakecock/MyIPTV/releases/latest](https://github.com/cakecock/CCTV-Plus/releases/tag/v1.8))**
 
 *(В открывшемся окне нажмите на файл `.apk` в разделе **Assets** для скачивания).*
 
