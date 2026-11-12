@@ -16,7 +16,7 @@ data class Channel(
     val streamUrl: String,
     val epgId: String?,
     val userAgent: String? = null,
-    val catchupDays: Int = 3,
+    val catchupDays: Int = 0,
     val catchupSource: String? = null
 )
 
@@ -59,16 +59,30 @@ val AppChangelogHistory = listOf(
         version = "CURRENT",
         date = "12.11.2026",
         changesRu = listOf(
-            "⚖️ Добавлен раздел «Лицензия и Условия использования» (правовая информация и лицензии открытых компонентов).",
-            "🔒 Добавлен раздел «Политика конфиденциальности» (информация о локальном хранении ключей и отсутствии слежки).",
-            "🐞 Добавлен раздел «Сообщить о проблеме» с генератором безопасного технического отчета об устройстве (ключи автоматически скрываются звездочками) и быстрым переходом на GitHub.",
-            "📅 Добавлено интерактивное окно «Телепрограмма и Архив (Catch-Up)» и расширенные настройки видеоплеера."
+            "📡 Пункты «Плейлисты», «Телепрограмма», «Порталы» и «QR-Пульт» объединены в один удобный раздел «Источники и Контент» с выпадающим списком, а все меню Настроек отсортировано.",
+            "📱 При первом запуске (и в настройках плеера) добавлен выбор типа устройства (Смартфон / Телевизор) и управления (Сенсор / Пульт ДУ).",
+            "🎬 В полноэкранный плеер для смартфонов добавлены быстрые кнопки «Список каналов» и «Гид / Архив» (на ТВ они автоматически скрыты).",
+            "📅 Значки программы передач и архива теперь отображаются строго на тех каналах, где они реально доступны.",
+            "🎨 Полностью обновлены 8 цветовых тем (3 тёмные и 5 светлых) для гармоничного сочетания фонов, карточек и текста."
         ),
         changesEn = listOf(
-            "⚖️ Added License & Terms of Use section.",
-            "🔒 Added Privacy Policy section (100% local storage & zero tracking guarantee).",
-            "🐞 Added Report an Issue section with safe diagnostic report generator (auto-masks private keys) and direct GitHub link.",
-            "📅 Added interactive TV Guide & Catch-Up Archive window and advanced video player settings."
+            "📡 Grouped Playlists, EPG, Portals, and QR Remote into a unified 'Sources & Content' dropdown menu and sorted all Settings sections.",
+            "📱 Added Device Type (Smartphone / TV) and Control Mode (Touch / Remote) selection on first launch and in Player Settings.",
+            "🎬 Added quick 'Channel List' and 'EPG / Archive' buttons in fullscreen player for Smartphones (automatically hidden on TV).",
+            "📅 EPG and Archive icons now appear strictly on channels that have guide/catch-up data.",
+            "🎨 Redesigned 8 color themes (3 Dark & 5 Light) for balanced contrast and eye comfort."
+        )
+    ),
+    ChangelogRelease(
+        version = "v1.25",
+        date = "12.11.2026",
+        changesRu = listOf(
+            "⚖️ Добавлены разделы «Лицензия», «Конфиденциальность» и «Сообщить о проблеме» с безопасным генератором отчетов.",
+            "📅 Добавлено интерактивное окно «Телепрограмма и Архив (Catch-Up)» и настройки буфера/пропорций видеоплеера."
+        ),
+        changesEn = listOf(
+            "⚖️ Added License, Privacy Policy, and Report an Issue sections.",
+            "📅 Added interactive TV Guide & Catch-Up Archive window and player buffer/aspect ratio settings."
         )
     ),
     ChangelogRelease(
@@ -76,23 +90,11 @@ val AppChangelogHistory = listOf(
         date = "12.11.2026",
         changesRu = listOf(
             "🖼 Новая фирменная векторная иконка приложения CCTV Plus.",
-            "🎨 Палитра расширена до 10 тем оформления (5 Тёмных и 5 Светлых)."
+            "🏷 Карточка разработчика (cakecock) с авто-синхронизацией номера версии и меню Импорта/Экспорта настроек."
         ),
         changesEn = listOf(
             "🖼 New custom vector app icon for CCTV Plus.",
-            "🎨 Expanded to 10 color themes (5 Dark & 5 Light)."
-        )
-    ),
-    ChangelogRelease(
-        version = "v1.23",
-        date = "12.11.2026",
-        changesRu = listOf(
-            "🏷 В нижней части Настроек добавлена карточка с подписью разработчика (cakecock) и номером версии.",
-            "📊 Добавлена полоска состояния скачивания обновлений (0% - 100% + МБ) и меню Импорта/Экспорта настроек."
-        ),
-        changesEn = listOf(
-            "🏷 Added developer signature (cakecock) and version badge in Settings.",
-            "📊 Added update download progress bar (0% - 100%) and Backup Import/Export."
+            "🏷 Developer signature badge (cakecock) and Backup Import/Export."
         )
     )
 )
@@ -108,7 +110,7 @@ val LicenseItemsRu = listOf(
 val LicenseItemsEn = listOf(
     "1. Software Purpose: 'CCTV Plus' is strictly a media player application (a software shell for streaming playback) provided 'AS IS'.",
     "2. No Built-in Content: The developer (cakecock) does NOT provide, host, stream, or distribute any TV channels, movies, series, or playlists. The application contains zero built-in media sources.",
-    "3. User Responsibility: All playlist URLs (M3U/M3U8), portal credentials (VPortal, Stalker), and EPG links are configured solely by the user. The user is responsible for ensuring they have legal rights to access their configured streams.",
+    "3. User Responsibility: All playlist URLs (M3U/M3U8), portal credentials (VPortal, Stalker), and EPG links are configured solely by the user.",
     "4. Open Source Licenses: This app uses AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil, and ZXing under the Apache License 2.0.",
     "5. Copyright: © 2026 cakecock. All rights reserved."
 )
@@ -162,16 +164,21 @@ enum class AppThemePalette(
     val text: Color,
     val subtext: Color
 ) {
+    // 1 и 2 оставлены в точности как ты просил
     DARK_EMERALD("dark_emerald", "🌑 Тёмная 1: Графит и Изумруд", "🌑 Dark 1: Obsidian & Emerald", true, Color(0xFF121417), Color(0xFF1C2026), Color(0xFF19322B), Color(0xFF10B981), Color.Black, Color(0xFFF3F4F6), Color(0xFF9CA3AF)),
     DARK_AMETHYST("dark_amethyst", "🌌 Тёмная 2: Королевский Аметист", "🌌 Dark 2: Royal Amethyst & Gold", true, Color(0xFF16121E), Color(0xFF231D30), Color(0xFF35284D), Color(0xFFF59E0B), Color.Black, Color(0xFFFAF5FF), Color(0xFFB8A9C9)),
-    DARK_RUBY("dark_ruby", "🎬 Тёмная 3: Кинозал Рубин", "🎬 Dark 3: Cinema Ruby", true, Color(0xFF0F0F12), Color(0xFF1A1A22), Color(0xFF3B1520), Color(0xFFE11D48), Color.White, Color(0xFFF8FAFC), Color(0xFF94A3B8)),
-    DARK_OCEAN("dark_ocean", "🌊 Тёмная 4: Глубокий Океан", "🌊 Dark 4: Deep Ocean Sapphire", true, Color(0xFF0B132B), Color(0xFF1C2541), Color(0xFF1E3A5F), Color(0xFF38BDF8), Color.Black, Color(0xFFF0F9FF), Color(0xFF93C5FD)),
-    DARK_MOCHA("dark_mocha", "☕ Тёмная 5: Тёплый Мокко", "☕ Dark 5: Warm Espresso Bronze", true, Color(0xFF181311), Color(0xFF261E1B), Color(0xFF3D2B22), Color(0xFFFB923C), Color.Black, Color(0xFFFFF7ED), Color(0xFFD6BCFA)),
-    LIGHT_NORDIC("light_nordic", "☀️ Светлая 1: Скандинавское Утро", "☀️ Light 1: Nordic Ocean", false, Color(0xFFF1F5F9), Color(0xFFFFFFFF), Color(0xFFDBEAFE), Color(0xFF2563EB), Color.White, Color(0xFF0F172A), Color(0xFF64748B)),
-    LIGHT_LATTE("light_latte", "🌅 Светлая 2: Тёплый Латте", "🌅 Light 2: Warm Sand & Terracotta", false, Color(0xFFFAF6F0), Color(0xFFFFFFFF), Color(0xFFFFEDD5), Color(0xFFEA580C), Color.White, Color(0xFF292524), Color(0xFF78716C)),
-    LIGHT_MINT("light_mint", "🌿 Светлая 3: Мятный Сад", "🌿 Light 3: Mint & Forest", false, Color(0xFFECFDF5), Color(0xFFFFFFFF), Color(0xFFD1FAE5), Color(0xFF059669), Color.White, Color(0xFF064E3B), Color(0xFF047857)),
-    LIGHT_SAKURA("light_sakura", "🌸 Светлая 4: Сакура и Роза", "🌸 Light 4: Sakura Blossom", false, Color(0xFFFFF1F2), Color(0xFFFFFFFF), Color(0xFFFFE4E6), Color(0xFFDB2777), Color.White, Color(0xFF4C0519), Color(0xFF9F1239)),
-    LIGHT_LAVENDER("light_lavender", "💎 Светлая 5: Лавандовый Кварц", "💎 Light 5: Lavender Quartz", false, Color(0xFFF5F3FF), Color(0xFFFFFFFF), Color(0xFFEDE9FE), Color(0xFF7C3AED), Color.White, Color(0xFF2E1065), Color(0xFF6D28D9));
+
+    // Переработанные гармоничные тёмные темы (3, 4, 5)
+    DARK_OCEAN("dark_ocean", "🌊 Тёмная 3: Полночный Сапфир", "🌊 Dark 3: Midnight Sapphire", true, Color(0xFF0E141D), Color(0xFF172130), Color(0xFF1E324A), Color(0xFF38BDF8), Color(0xFF082F49), Color(0xFFF1F5F9), Color(0xFF94A3B8)),
+    DARK_RUBY("dark_ruby", "🍷 Тёмная 4: Бархатный Рубин", "🍷 Dark 4: Velvet Ruby", true, Color(0xFF141115), Color(0xFF211B22), Color(0xFF381E28), Color(0xFFF43F5E), Color.White, Color(0xFFF8FAFC), Color(0xFFA89FA8)),
+    DARK_MOCHA("dark_mocha", "☕ Тёмная 5: Кофейный Кварц", "☕ Dark 5: Espresso & Caramel", true, Color(0xFF141210), Color(0xFF211D1A), Color(0xFF332922), Color(0xFFE5A967), Color(0xFF1C130A), Color(0xFFF5F0EB), Color(0xFFA89F96)),
+
+    // Переработанные сбалансированные светлые темы с мягким контрастом (6, 7, 8, 9, 10)
+    LIGHT_NORDIC("light_nordic", "☀️ Светлая 1: Нордический Лёд", "☀️ Light 1: Nordic Ice", false, Color(0xFFE2E8F0), Color(0xFFF8FAFC), Color(0xFFDBEAFE), Color(0xFF0284C7), Color.White, Color(0xFF1E293B), Color(0xFF64748B)),
+    LIGHT_LATTE("light_latte", "🌅 Светлая 2: Песочный Кашемир", "🌅 Light 2: Warm Cashmere", false, Color(0xFFEAE3DC), Color(0xFFFAF7F2), Color(0xFFF5E6D3), Color(0xFFC25E00), Color.White, Color(0xFF292524), Color(0xFF78716C)),
+    LIGHT_MINT("light_mint", "🌿 Светлая 3: Шалфей и Эвкалипт", "🌿 Light 3: Sage & Eucalyptus", false, Color(0xFFDCE7E1), Color(0xFFF4F9F6), Color(0xFFCBE3D6), Color(0xFF0D9488), Color.White, Color(0xFF1E2925), Color(0xFF5C7067)),
+    LIGHT_SAKURA("light_sakura", "🌸 Светлая 4: Пудровый Кварц", "🌸 Light 4: Rose Quartz", false, Color(0xFFEAE0E3), Color(0xFFFAF5F6), Color(0xFFF2D9E0), Color(0xFFBE185D), Color.White, Color(0xFF2D1E24), Color(0xFF7A636C)),
+    LIGHT_LAVENDER("light_lavender", "💎 Светлая 5: Туманный Ирис", "💎 Light 5: Misty Iris", false, Color(0xFFE2E0EC), Color(0xFFF7F6FB), Color(0xFFDDD6FE), Color(0xFF6D28D9), Color.White, Color(0xFF221E30), Color(0xFF6B6680));
 
     companion object {
         fun fromId(id: String?): AppThemePalette = entries.find { it.id == id } ?: DARK_EMERALD
@@ -192,6 +199,7 @@ data class Strings(
     val goToSettings: String,
     val loading: String,
     val reconnecting: String,
+    val catSourcesGroup: String,
     val catAppearance: String,
     val catPlayer: String,
     val catPlaylists: String,
@@ -228,8 +236,9 @@ val RuStrings = Strings(
     goToSettings = "Перейти в Настройки",
     loading = "Загрузка данных...",
     reconnecting = "Поток прервался, переподключаемся...",
-    catAppearance = "🎨 Вид, Темы и Язык (10 тем)",
-    catPlayer = "⚙️ Настройки видеоплеера",
+    catSourcesGroup = "📡 Источники и Контент (Плейлисты, EPG, Порталы, QR)",
+    catAppearance = "🎨 Внешний вид, Темы и Язык",
+    catPlayer = "⚙️ Плеер, Устройство и Управление",
     catPlaylists = "📺 Плейлисты (M3U / M3U8)",
     catEpg = "📅 Телепрограмма (EPG)",
     catPortals = "🎬 Порталы (VPortal и Stalker)",
@@ -264,8 +273,9 @@ val EnStrings = Strings(
     goToSettings = "Open Settings",
     loading = "Loading data...",
     reconnecting = "Stream dropped, reconnecting...",
-    catAppearance = "🎨 Theme & Language (10 Themes)",
-    catPlayer = "⚙️ Video Player Settings",
+    catSourcesGroup = "📡 Sources & Content (Playlists, EPG, Portals, QR)",
+    catAppearance = "🎨 Appearance, Themes & Language",
+    catPlayer = "⚙️ Player, Device & Controls",
     catPlaylists = "📺 Playlists (M3U / M3U8)",
     catEpg = "📅 TV Guide (EPG)",
     catPortals = "🎬 Portals (VPortal & Stalker)",
@@ -323,6 +333,8 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     val root = JSONObject()
     root.put("app", "CCTV Plus")
     root.put("lang", prefs.getString("lang", "ru"))
+    root.put("device_type", prefs.getString("device_type", "mobile"))
+    root.put("control_mode", prefs.getString("control_mode", "touch"))
     root.put("theme_id", prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
     root.put("playlists_json", prefs.getString("playlists_json", "[]"))
     root.put("selected_playlist_id", prefs.getString("selected_playlist_id", ""))
@@ -335,6 +347,7 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     root.put("player_resize", prefs.getInt("player_resize", 0))
     root.put("player_buffer", prefs.getInt("player_buffer", 1))
     root.put("player_ua", prefs.getString("player_ua", "Lavf/60.3.100"))
+    root.put("player_auto_fs", prefs.getBoolean("player_auto_fs", false))
     val favArr = JSONArray()
     prefs.getStringSet("favs", emptySet())?.forEach { favArr.put(it) }
     root.put("favs", favArr)
@@ -351,6 +364,8 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
     prefs.edit()
         .putBoolean("lang_selected", true)
         .putString("lang", root.optString("lang", "ru"))
+        .putString("device_type", root.optString("device_type", "mobile"))
+        .putString("control_mode", root.optString("control_mode", "touch"))
         .putString("theme_id", root.optString("theme_id", AppThemePalette.DARK_EMERALD.id))
         .putString("playlists_json", root.optString("playlists_json", "[]"))
         .putString("selected_playlist_id", root.optString("selected_playlist_id", ""))
@@ -363,6 +378,7 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
         .putInt("player_resize", root.optInt("player_resize", 0))
         .putInt("player_buffer", root.optInt("player_buffer", 1))
         .putString("player_ua", root.optString("player_ua", "Lavf/60.3.100"))
+        .putBoolean("player_auto_fs", root.optBoolean("player_auto_fs", false))
         .putStringSet("favs", favSet)
         .apply()
     true
