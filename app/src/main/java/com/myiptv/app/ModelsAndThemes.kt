@@ -47,11 +47,25 @@ data class ChangelogRelease(
 
 val AppChangelogHistory = listOf(
     ChangelogRelease(
-        version = "v1.23 (Текущая)",
+        version = "v1.24 (Текущая)",
+        date = "12.11.2026",
+        changesRu = listOf(
+            "🖼 Новая фирменная векторная иконка приложения CCTV Plus (экран ТВ с неоновой рамкой и знаком Plus).",
+            "🎨 Палитра расширена до 10 тем оформления: 5 Тёмных (добавлены Кинозал Рубин, Глубокий Океан, Тёплый Мокко) и 5 Светлых (добавлены Мятный Сад, Сакура и Роза, Лавандовый Кварц).",
+            "📝 Обновлена документация проекта README.md."
+        ),
+        changesEn = listOf(
+            "🖼 New custom vector app icon for CCTV Plus.",
+            "🎨 Expanded to 10 color themes: 5 Dark (added Cinema Ruby, Deep Ocean, Warm Mocha) and 5 Light (added Mint Garden, Sakura Rose, Lavender Quartz).",
+            "📝 Updated project README.md."
+        )
+    ),
+    ChangelogRelease(
+        version = "v1.23",
         date = "12.11.2026",
         changesRu = listOf(
             "🏷 В нижней части Настроек добавлена карточка с подписью разработчика (cakecock) и автоматическим номером текущей версии и сборки.",
-            "🔄 В меню обновления теперь отображается текущая установленная версия приложения для удобного сравнения."
+            "🔄 В меню обновления теперь отображается текущая установленная версия приложения."
         ),
         changesEn = listOf(
             "🏷 Added developer signature (cakecock) and automatic version/build badge at the bottom of Settings.",
@@ -89,20 +103,6 @@ val AppChangelogHistory = listOf(
             "📅 Added EPG loading progress bar and status in Settings.",
             "⭐ Moved Favorites into the dynamic channel categories bar."
         )
-    ),
-    ChangelogRelease(
-        version = "v1.16",
-        date = "12.11.2026",
-        changesRu = listOf(
-            "🎬 Полная поддержка протокола POST JSON для VPortal (TVlider / iLook).",
-            "🗂 Переработка экрана Настроек в виде разворачивающихся строчек.",
-            "🔄 Встроенная система автообновления напрямую с GitHub."
-        ),
-        changesEn = listOf(
-            "🎬 Full POST JSON protocol support for VPortal.",
-            "🗂 Redesigned Settings with expandable accordion rows.",
-            "🔄 Built-in GitHub auto-updater."
-        )
     )
 )
 
@@ -119,10 +119,11 @@ enum class AppThemePalette(
     val text: Color,
     val subtext: Color
 ) {
+    // === 5 ТЁМНЫХ ТЕМ ===
     DARK_EMERALD(
         id = "dark_emerald",
-        titleRu = "🌑 Тёмная: Графит и Изумруд",
-        titleEn = "🌑 Dark: Obsidian & Emerald",
+        titleRu = "🌑 Тёмная 1: Графит и Изумруд",
+        titleEn = "🌑 Dark 1: Obsidian & Emerald",
         isDark = true,
         bg = Color(0xFF121417),
         card = Color(0xFF1C2026),
@@ -134,8 +135,8 @@ enum class AppThemePalette(
     ),
     DARK_AMETHYST(
         id = "dark_amethyst",
-        titleRu = "🌌 Тёмная: Королевский Аметист",
-        titleEn = "🌌 Dark: Royal Amethyst & Gold",
+        titleRu = "🌌 Тёмная 2: Королевский Аметист",
+        titleEn = "🌌 Dark 2: Royal Amethyst & Gold",
         isDark = true,
         bg = Color(0xFF16121E),
         card = Color(0xFF231D30),
@@ -145,10 +146,51 @@ enum class AppThemePalette(
         text = Color(0xFFFAF5FF),
         subtext = Color(0xFFB8A9C9)
     ),
+    DARK_RUBY(
+        id = "dark_ruby",
+        titleRu = "🎬 Тёмная 3: Кинозал Рубин",
+        titleEn = "🎬 Dark 3: Cinema Ruby",
+        isDark = true,
+        bg = Color(0xFF0F0F12),
+        card = Color(0xFF1A1A22),
+        selectedCard = Color(0xFF3B1520),
+        primary = Color(0xFFE11D48),
+        onPrimary = Color.White,
+        text = Color(0xFFF8FAFC),
+        subtext = Color(0xFF94A3B8)
+    ),
+    DARK_OCEAN(
+        id = "dark_ocean",
+        titleRu = "🌊 Тёмная 4: Глубокий Океан",
+        titleEn = "🌊 Dark 4: Deep Ocean Sapphire",
+        isDark = true,
+        bg = Color(0xFF0B132B),
+        card = Color(0xFF1C2541),
+        selectedCard = Color(0xFF1E3A5F),
+        primary = Color(0xFF38BDF8),
+        onPrimary = Color.Black,
+        text = Color(0xFFF0F9FF),
+        subtext = Color(0xFF93C5FD)
+    ),
+    DARK_MOCHA(
+        id = "dark_mocha",
+        titleRu = "☕ Тёмная 5: Тёплый Мокко",
+        titleEn = "☕ Dark 5: Warm Espresso Bronze",
+        isDark = true,
+        bg = Color(0xFF181311),
+        card = Color(0xFF261E1B),
+        selectedCard = Color(0xFF3D2B22),
+        primary = Color(0xFFFB923C),
+        onPrimary = Color.Black,
+        text = Color(0xFFFFF7ED),
+        subtext = Color(0xFFD6BCFA)
+    ),
+
+    // === 5 СВЕТЛЫХ ТЕМ ===
     LIGHT_NORDIC(
         id = "light_nordic",
-        titleRu = "☀️ Светлая: Скандинавское Утро",
-        titleEn = "☀️ Light: Nordic Ocean",
+        titleRu = "☀️ Светлая 1: Скандинавское Утро",
+        titleEn = "☀️ Light 1: Nordic Ocean",
         isDark = false,
         bg = Color(0xFFF1F5F9),
         card = Color(0xFFFFFFFF),
@@ -160,8 +202,8 @@ enum class AppThemePalette(
     ),
     LIGHT_LATTE(
         id = "light_latte",
-        titleRu = "🌅 Светлая: Тёплый Латте",
-        titleEn = "🌅 Light: Warm Sand & Terracotta",
+        titleRu = "🌅 Светлая 2: Тёплый Латте",
+        titleEn = "🌅 Light 2: Warm Sand & Terracotta",
         isDark = false,
         bg = Color(0xFFFAF6F0),
         card = Color(0xFFFFFFFF),
@@ -170,6 +212,45 @@ enum class AppThemePalette(
         onPrimary = Color.White,
         text = Color(0xFF292524),
         subtext = Color(0xFF78716C)
+    ),
+    LIGHT_MINT(
+        id = "light_mint",
+        titleRu = "🌿 Светлая 3: Мятный Сад",
+        titleEn = "🌿 Light 3: Mint & Forest",
+        isDark = false,
+        bg = Color(0xFFECFDF5),
+        card = Color(0xFFFFFFFF),
+        selectedCard = Color(0xFFD1FAE5),
+        primary = Color(0xFF059669),
+        onPrimary = Color.White,
+        text = Color(0xFF064E3B),
+        subtext = Color(0xFF047857)
+    ),
+    LIGHT_SAKURA(
+        id = "light_sakura",
+        titleRu = "🌸 Светлая 4: Сакура и Роза",
+        titleEn = "🌸 Light 4: Sakura Blossom",
+        isDark = false,
+        bg = Color(0xFFFFF1F2),
+        card = Color(0xFFFFFFFF),
+        selectedCard = Color(0xFFFFE4E6),
+        primary = Color(0xFFDB2777),
+        onPrimary = Color.White,
+        text = Color(0xFF4C0519),
+        subtext = Color(0xFF9F1239)
+    ),
+    LIGHT_LAVENDER(
+        id = "light_lavender",
+        titleRu = "💎 Светлая 5: Лавандовый Кварц",
+        titleEn = "💎 Light 5: Lavender Quartz",
+        isDark = false,
+        bg = Color(0xFFF5F3FF),
+        card = Color(0xFFFFFFFF),
+        selectedCard = Color(0xFFEDE9FE),
+        primary = Color(0xFF7C3AED),
+        onPrimary = Color.White,
+        text = Color(0xFF2E1065),
+        subtext = Color(0xFF6D28D9)
     );
 
     companion object {
@@ -223,7 +304,7 @@ val RuStrings = Strings(
     goToSettings = "Перейти в Настройки",
     loading = "Загрузка данных...",
     reconnecting = "Поток прервался, переподключаемся...",
-    catAppearance = "🎨 Вид, Темы и Язык",
+    catAppearance = "🎨 Вид, Темы и Язык (10 тем)",
     catPlaylists = "📺 Плейлисты (M3U / M3U8)",
     catEpg = "📅 Телепрограмма (EPG)",
     catPortals = "🎬 Порталы (VPortal и Stalker)",
@@ -255,7 +336,7 @@ val EnStrings = Strings(
     goToSettings = "Open Settings",
     loading = "Loading data...",
     reconnecting = "Stream dropped, reconnecting...",
-    catAppearance = "🎨 Theme & Language",
+    catAppearance = "🎨 Theme & Language (10 Themes)",
     catPlaylists = "📺 Playlists (M3U / M3U8)",
     catEpg = "📅 TV Guide (EPG)",
     catPortals = "🎬 Portals (VPortal & Stalker)",
