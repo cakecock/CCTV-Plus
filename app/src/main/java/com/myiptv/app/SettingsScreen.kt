@@ -33,6 +33,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 
 val BuiltInEpgPresets = listOf(
@@ -44,8 +45,8 @@ val BuiltInEpgPresets = listOf(
 
 fun getAppVersionInfo(context: Context): Pair<String, Long> = runCatching {
     val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-    (pInfo.versionName ?: "1.0") to pInfo.longVersionCode
-}.getOrDefault("1.0" to 1L)
+    (pInfo.versionName ?: "2.0") to pInfo.longVersionCode
+}.getOrDefault("2.0" to 1L)
 
 @Composable
 fun SourceDropdownSelector(
@@ -69,6 +70,7 @@ fun SourceDropdownSelector(
     Box(modifier = modifier) {
         Row(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(theme.bg)
+                .tvFocusBorder(theme.primary)
                 .border(1.dp, theme.primary.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
                 .clickable { expanded = true }.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -99,7 +101,8 @@ fun ExpandableSectionRow(
     Card(
         colors = CardDefaults.cardColors(containerColor = theme.card),
         shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.fillMaxWidth().border(if (isExpanded) 1.5.dp else 0.dp, if (isExpanded) theme.primary else Color.Transparent, RoundedCornerShape(14.dp))
+        modifier = Modifier.fillMaxWidth().tvFocusBorder(theme.primary, RoundedCornerShape(14.dp))
+            .border(if (isExpanded) 1.5.dp else 0.dp, if (isExpanded) theme.primary else Color.Transparent, RoundedCornerShape(14.dp))
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
@@ -164,6 +167,55 @@ fun FirstLaunchSetupScreen(
 }
 
 @Composable
+fun DonateDialog(S: Strings, theme: AppThemePalette, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var copiedLabel by remember { mutableStateOf("") }
+    val methods = listOf(
+        "💳 Банковская карта" to DONATE_CARD_NUMBER,
+        "💎 USDT (TRC20)" to DONATE_USDT_TRC20,
+        "💠 USDT (TON)" to DONATE_USDT_TON,
+        "₿ Bitcoin (BTC)" to DONATE_BTC_ADDRESS
+    )
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp)) {
+            Column(modifier = Modifier.padding(18.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (S.isRu) "☕ Поддержать разработчика" else "☕ Support Developer", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.primary)
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Close, null, tint = theme.text) }
+                }
+                Text(
+                    if (S.isRu) "Спасибо за использование CCTV Plus! Любая поддержка помогает развивать проект:"
+                    else "Thank you for using CCTV Plus! Any support helps keep the project growing:",
+                    fontSize = 12.sp, color = theme.subtext
+                )
+                methods.forEach { (title, value) ->
+                    val isConfigured = !value.startsWith("ВПИШИ_") && value.isNotBlank()
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg)
+                            .clickable(enabled = isConfigured) {
+                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("Donate", value))
+                                copiedLabel = "✅ $title скопирован!"
+                            }
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = theme.text)
+                            Text(if (isConfigured) value else (if (S.isRu) "Реквизит ещё не указан" else "Not configured yet"), fontSize = 11.sp, color = if (isConfigured) theme.primary else theme.subtext, maxLines = 1)
+                        }
+                        if (isConfigured) Icon(Icons.Default.ContentCopy, null, tint = theme.primary, modifier = Modifier.size(18.dp))
+                    }
+                }
+                if (copiedLabel.isNotBlank()) Text(copiedLabel, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.primary)
+            }
+        }
+    }
+}
+
+@Composable
 fun AccordionSettingsScreen(
     S: Strings,
     prefs: SharedPreferences,
@@ -173,6 +225,7 @@ fun AccordionSettingsScreen(
     clockPosition: Int,
     playerEngine: Int,
     archiveDays: Int,
+    epgOffsetHours: Int,
     sleepTimerMinutes: Int,
     hiddenGroupsCount: Int,
     parentalEnabled: Boolean,
@@ -182,6 +235,7 @@ fun AccordionSettingsScreen(
     onClockPositionChange: (Int) -> Unit,
     onPlayerEngineChange: (Int) -> Unit,
     onArchiveDaysChange: (Int) -> Unit,
+    onEpgOffsetChange: (Int) -> Unit,
     onSleepTimerChange: (Int) -> Unit,
     onOpenHiddenGroups: () -> Unit,
     onParentalEnabledChange: (Boolean) -> Unit,
@@ -242,6 +296,15 @@ fun AccordionSettingsScreen(
     var backupStatus by remember { mutableStateOf("") }
     var issueDescription by remember { mutableStateOf("") }
     var reportStatus by remember { mutableStateOf("") }
+    var showDonateDialog by remember { mutableStateOf(false) }
+
+    val localM3uLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            val fileName = uri.lastPathSegment?.substringAfterLast("/")?.substringBeforeLast(".") ?: "Файл M3U"
+            onAddPlaylist(fileName, uri.toString())
+        }
+    }
 
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
@@ -264,16 +327,15 @@ fun AccordionSettingsScreen(
         }
     }
 
+    if (showDonateDialog) {
+        DonateDialog(S, theme) { showDonateDialog = false }
+    }
+
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
         // 1. ИСТОЧНИКИ
         ExpandableSectionRow(S.catSourcesGroup, expandedRow == 0, theme, { toggleRow(0) }) {
-            val subOpts = listOf(
-                "playlists" to "${S.catPlaylists} (${playlists.size})",
-                "epg" to S.catEpg,
-                "portals" to S.catPortals,
-                "qr" to S.catQr
-            )
+            val subOpts = listOf("playlists" to "${S.catPlaylists} (${playlists.size})", "epg" to S.catEpg, "portals" to S.catPortals, "qr" to S.catQr)
             val curSubTitle = subOpts.find { it.first == selectedSourceSubMenu }?.second ?: subOpts.first().second
             SourceDropdownSelector(if (S.isRu) "Раздел:" else "Section:", curSubTitle, subOpts, theme) { selectedSourceSubMenu = it }
             HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f))
@@ -284,10 +346,13 @@ fun AccordionSettingsScreen(
                         val curName = playlists.find { it.id == selectedPlaylistId }?.name ?: playlists.first().name
                         SourceDropdownSelector(S.activePlaylistLabel, "📺 $curName", playlists.map { it.id to it.name }, theme, onSelectPlaylist)
                     }
-                    OutlinedButton(onClick = onOpenHiddenGroups, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Default.VisibilityOff, null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (S.isRu) "Скрыть категории (скрыто: $hiddenGroupsCount)" else "Hide Categories ($hiddenGroupsCount)")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = { localM3uLauncher.launch(arrayOf("audio/x-mpegurl", "application/vnd.apple.mpegurl", "*/*")) }, modifier = Modifier.weight(1f)) {
+                            Text(if (S.isRu) "📁 С флешки / файла" else "📁 Local File", fontSize = 12.sp, maxLines = 1)
+                        }
+                        OutlinedButton(onClick = onOpenHiddenGroups, modifier = Modifier.weight(1f)) {
+                            Text(if (S.isRu) "👁 Группы (-$hiddenGroupsCount)" else "👁 Groups (-$hiddenGroupsCount)", fontSize = 12.sp, maxLines = 1)
+                        }
                     }
                     OutlinedTextField(value = newPlName, onValueChange = { newPlName = it }, label = { Text(S.addSourceName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = newPlUrl, onValueChange = { newPlUrl = it }, label = { Text(S.addSourceUrl) }, trailingIcon = { if (newPlUrl.isNotEmpty()) IconButton(onClick = { newPlUrl = "" }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -317,6 +382,9 @@ fun AccordionSettingsScreen(
 
                     val archiveOpts = listOf("1" to "1 день", "3" to "3 дня", "5" to "5 дней")
                     SourceDropdownSelector(if (S.isRu) "Глубина архива:" else "Archive:", archiveOpts.find { it.first == archiveDays.toString() }?.second ?: "3 дня", archiveOpts, theme) { onArchiveDaysChange(it.toIntOrNull() ?: 3) }
+
+                    val offsetOpts = (-12..12).map { h -> h.toString() to (if (h == 0) "0 ч (Без сдвига)" else if (h > 0) "+$h ч" else "$h ч") }
+                    SourceDropdownSelector(if (S.isRu) "Сдвиг времени EPG:" else "EPG Time Shift:", offsetOpts.find { it.first == epgOffsetHours.toString() }?.second ?: "0 ч", offsetOpts, theme) { onEpgOffsetChange(it.toIntOrNull() ?: 0) }
 
                     OutlinedTextField(value = newEpgName, onValueChange = { newEpgName = it }, label = { Text(S.addSourceName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = newEpgUrl, onValueChange = { newEpgUrl = it }, label = { Text(S.addSourceUrl) }, trailingIcon = { if (newEpgUrl.isNotEmpty()) IconButton(onClick = { newEpgUrl = "" }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -362,7 +430,7 @@ fun AccordionSettingsScreen(
         // 2. ВИДЕОПЛЕЕР
         ExpandableSectionRow(S.catPlayer, expandedRow == 1, theme, { toggleRow(1) }) {
             val engineOpts = listOf(
-                "0" to (if (S.isRu) "Встроенный (ExoPlayer)" else "Built-in (ExoPlayer)"),
+                "0" to (if (S.isRu) "Встроенный (ExoPlayer + FFmpeg)" else "Built-in (ExoPlayer + FFmpeg)"),
                 "1" to (if (S.isRu) "Системный (Android)" else "System (Android)"),
                 "2" to (if (S.isRu) "Внешний (VLC / MX)" else "External (VLC / MX)")
             )
@@ -399,8 +467,8 @@ fun AccordionSettingsScreen(
             SourceDropdownSelector("User-Agent:", uaOpts.find { it.first == playerDefaultUa }?.second ?: playerDefaultUa, uaOpts, theme, onPlayerUaChange)
         }
 
-        // 3. УСТРОЙСТВО 
-        ExpandableSectionRow(if (S.isRu) "🎮 Устройство" else "🎮 Device", expandedRow == 2, theme, { toggleRow(2) }) {
+        // 3. УСТРОЙСТВО И 18+
+        ExpandableSectionRow(if (S.isRu) "🎮 Устройство и 18+" else "🎮 Device & 18+", expandedRow == 2, theme, { toggleRow(2) }) {
             val devOpts = listOf("mobile" to (if (S.isRu) "📱 Смартфон" else "📱 Phone"), "tv" to (if (S.isRu) "📺 Телевизор (ТВ)" else "📺 Android TV"))
             SourceDropdownSelector(if (S.isRu) "Устройство:" else "Device:", devOpts.find { it.first == deviceType }?.second ?: devOpts.first().second, devOpts, theme, onDeviceTypeChange)
 
@@ -422,14 +490,15 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 4. ТЕМА И ЯЗЫК
+        // 4. ТЕМА И ЯЗЫК (одинаковый чистый фон у всех строчек тем!)
         ExpandableSectionRow(S.catAppearance, expandedRow == 3, theme, { toggleRow(3) }) {
             Text(if (S.isRu) "Тёмные" else "Dark", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.subtext)
             AppThemePalette.entries.filter { it.isDark }.forEach { item ->
                 val isChosen = item == theme
                 Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(item.bg)
-                        .border(if (isChosen) 2.dp else 1.dp, if (isChosen) item.primary else item.subtext.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg)
+                        .tvFocusBorder(theme.primary, RoundedCornerShape(10.dp))
+                        .border(if (isChosen) 2.dp else 1.dp, if (isChosen) theme.primary else theme.subtext.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
                         .clickable { onSelectTheme(item) }.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -437,9 +506,9 @@ fun AccordionSettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(item.primary))
                         Spacer(Modifier.width(10.dp))
-                        Text(if (S.isRu) item.titleRu else item.titleEn, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = item.text)
+                        Text(if (S.isRu) item.titleRu else item.titleEn, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = theme.text)
                     }
-                    if (isChosen) Icon(Icons.Default.Check, null, tint = item.primary)
+                    if (isChosen) Icon(Icons.Default.Check, null, tint = theme.primary)
                 }
             }
 
@@ -447,8 +516,9 @@ fun AccordionSettingsScreen(
             AppThemePalette.entries.filter { !it.isDark }.forEach { item ->
                 val isChosen = item == theme
                 Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(item.bg)
-                        .border(if (isChosen) 2.dp else 1.dp, if (isChosen) item.primary else item.subtext.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg)
+                        .tvFocusBorder(theme.primary, RoundedCornerShape(10.dp))
+                        .border(if (isChosen) 2.dp else 1.dp, if (isChosen) theme.primary else theme.subtext.copy(alpha = 0.25f), RoundedCornerShape(10.dp))
                         .clickable { onSelectTheme(item) }.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -456,9 +526,9 @@ fun AccordionSettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(item.primary))
                         Spacer(Modifier.width(10.dp))
-                        Text(if (S.isRu) item.titleRu else item.titleEn, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = item.text)
+                        Text(if (S.isRu) item.titleRu else item.titleEn, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = theme.text)
                     }
-                    if (isChosen) Icon(Icons.Default.Check, null, tint = item.primary)
+                    if (isChosen) Icon(Icons.Default.Check, null, tint = theme.primary)
                 }
             }
 
@@ -543,7 +613,7 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // ОБНОВЛЕНИЕ + РАЗРАБОТЧИК И ВЕРСИЯ
+        // ОБНОВЛЕНИЕ + РАЗРАБОТЧИК + КНОПКА ПОДДЕРЖКИ
         Spacer(Modifier.height(2.dp))
         Column(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(theme.card).border(1.dp, theme.primary.copy(alpha = 0.3f), RoundedCornerShape(14.dp)).padding(14.dp),
@@ -571,11 +641,7 @@ fun AccordionSettingsScreen(
                 },
                 enabled = !isUpdating,
                 modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.SystemUpdate, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (S.isRu) "Проверить обновления" else "Check for Updates", fontWeight = FontWeight.Bold)
-            }
+            ) { Icon(Icons.Default.SystemUpdate, null); Spacer(Modifier.width(8.dp)); Text(if (S.isRu) "Проверить обновления" else "Check for Updates", fontWeight = FontWeight.Bold) }
 
             if (isUpdating) {
                 if (downloadPercent in 0..100) LinearProgressIndicator(progress = { downloadPercent / 100f }, modifier = Modifier.fillMaxWidth().height(8.dp), color = theme.primary)
@@ -589,26 +655,24 @@ fun AccordionSettingsScreen(
                         scope.launch {
                             isUpdating = true; downloadPercent = 0
                             val dl = GitHubUpdater.downloadAndInstall(context, info.downloadUrl) { pct, dlMb, totMb ->
-                                downloadPercent = pct
-                                updateStatus = "⏳ $pct% ($dlMb / $totMb МБ)"
+                                downloadPercent = pct; updateStatus = "⏳ $pct% ($dlMb / $totMb МБ)"
                             }
                             isUpdating = false
-                            dl.onSuccess { updateStatus = "✅ Скачано (100%)" }
-                                .onFailure { updateStatus = "❌ ${it.localizedMessage}" }
+                            dl.onSuccess { updateStatus = "✅ Скачано (100%)" }.onFailure { updateStatus = "❌ ${it.localizedMessage}" }
                         }
                     },
                     enabled = !isUpdating,
                     modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Default.CloudDownload, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Установить ${latestRelease!!.versionTag}", fontWeight = FontWeight.Bold)
-                }
+                ) { Icon(Icons.Default.CloudDownload, null); Spacer(Modifier.width(8.dp)); Text("Установить ${latestRelease!!.versionTag}", fontWeight = FontWeight.Bold) }
             }
 
             HorizontalDivider(color = theme.subtext.copy(alpha = 0.2f))
             Text("CCTV Plus • v$installedVerName (Build #$installedVerCode)", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = theme.primary)
             Text(if (S.isRu) "Разработчик: cakecock © 2026" else "Developer: cakecock © 2026", fontSize = 12.sp, color = theme.subtext)
+
+            OutlinedButton(onClick = { showDonateDialog = true }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (S.isRu) "☕ Поддержать разработчика" else "☕ Support Developer", color = theme.primary, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
