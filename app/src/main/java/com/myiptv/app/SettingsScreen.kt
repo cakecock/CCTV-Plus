@@ -162,11 +162,15 @@ fun AccordionSettingsScreen(
     deviceType: String,
     controlMode: String,
     clockPosition: Int,
+    playerEngine: Int,
+    archiveDays: Int,
     parentalEnabled: Boolean,
     parentalPin: String,
     onDeviceTypeChange: (String) -> Unit,
     onControlModeChange: (String) -> Unit,
     onClockPositionChange: (Int) -> Unit,
+    onPlayerEngineChange: (Int) -> Unit,
+    onArchiveDaysChange: (Int) -> Unit,
     onParentalEnabledChange: (Boolean) -> Unit,
     onParentalPinChange: (String) -> Unit,
     onSelectTheme: (AppThemePalette) -> Unit,
@@ -295,15 +299,21 @@ fun AccordionSettingsScreen(
                             Text(if (S.isRu) "🔄 Обновить телепрограмму сейчас" else "🔄 Refresh EPG Now", fontWeight = FontWeight.Bold)
                         }
                     }
-                    // Выпадающий список со встроенными источниками EPG (TVLider, IPTVx) + пользовательскими!
                     val epgOpts = BuiltInEpgPresets + epgSources.map { it.id to "📌 ${it.name}" }
                     val curEpg = epgOpts.find { it.first == selectedEpgId }?.second ?: BuiltInEpgPresets.first().second
+                    SourceDropdownSelector(S.activeEpgLabel, curEpg, epgOpts, theme, onSelectEpg)
+
+                    val archiveOpts = listOf(
+                        "1" to (if (S.isRu) "⏪ 1 день назад (Быстрая загрузка)" else "⏪ 1 Day Back"),
+                        "3" to (if (S.isRu) "⏪ 3 дня назад (Оптимально)" else "⏪ 3 Days Back"),
+                        "5" to (if (S.isRu) "⏪ 5 дней назад (Максимум)" else "⏪ 5 Days Back")
+                    )
                     SourceDropdownSelector(
-                        label = S.activeEpgLabel,
-                        selectedTitle = curEpg,
-                        options = epgOpts,
+                        label = if (S.isRu) "Глубина архива (дней):" else "Archive Depth (Days):",
+                        selectedTitle = archiveOpts.find { it.first == archiveDays.toString() }?.second ?: archiveOpts[1].second,
+                        options = archiveOpts,
                         theme = theme,
-                        onSelect = onSelectEpg
+                        onSelect = { onArchiveDaysChange(it.toIntOrNull() ?: 3) }
                     )
 
                     OutlinedTextField(value = newEpgName, onValueChange = { newEpgName = it }, label = { Text(S.addSourceName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -350,12 +360,52 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 2. ПЛЕЕР, ЧАСЫ, PIN-КОД И УПРАВЛЕНИЕ
+        // 2. ВЫБОР ПЛЕЕРА, АРХИВ, ЧАСЫ И УПРАВЛЕНИЕ
         ExpandableSectionRow(S.catPlayer, expandedRow == 1, theme, { toggleRow(1) }) {
+            // Блок выбора движка видеоплеера!
+            val engineOpts = listOf(
+                "0" to (if (S.isRu) "🎬 Встроенный ExoPlayer (Media3 — ТВ-Гид, 4-экран, жесты)" else "🎬 Built-in ExoPlayer (Media3)"),
+                "1" to (if (S.isRu) "📱 Системный плеер Android (Native VideoView)" else "📱 Native Android Player"),
+                "2" to (if (S.isRu) "🚀 Внешний плеер (VLC, MX Player, Vimu, Just)" else "🚀 External Player (VLC / MX / Vimu)")
+            )
+            SourceDropdownSelector(
+                label = if (S.isRu) "🎬 Блок выбора видеоплеера (Движок):" else "🎬 Video Player Engine:",
+                selectedTitle = engineOpts.find { it.first == playerEngine.toString() }?.second ?: engineOpts.first().second,
+                options = engineOpts,
+                theme = theme,
+                onSelect = { onPlayerEngineChange(it.toIntOrNull() ?: 0) }
+            )
+
+            val archiveOpts = listOf(
+                "1" to (if (S.isRu) "⏪ 1 день назад" else "⏪ 1 Day Back"),
+                "3" to (if (S.isRu) "⏪ 3 дня назад" else "⏪ 3 Days Back"),
+                "5" to (if (S.isRu) "⏪ 5 дней назад" else "⏪ 5 Days Back")
+            )
+            SourceDropdownSelector(
+                label = if (S.isRu) "Размер архива (перемотка назад):" else "Archive Depth:",
+                selectedTitle = archiveOpts.find { it.first == archiveDays.toString() }?.second ?: archiveOpts[1].second,
+                options = archiveOpts,
+                theme = theme,
+                onSelect = { onArchiveDaysChange(it.toIntOrNull() ?: 3) }
+            )
+
             Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(if (S.isRu) "Открывать канал сразу на полный экран при выборе" else "Open channel in fullscreen on tap", fontWeight = FontWeight.Bold, color = theme.text, modifier = Modifier.weight(1f))
                 Switch(checked = openFullscreenOnTap, onCheckedChange = onAutoFsChange)
             }
+
+            val clockOpts = listOf(
+                "0" to (if (S.isRu) "🚫 Выключены" else "🚫 Off"),
+                "1" to (if (S.isRu) "↖️ В левом верхнем углу плеера" else "↖️ Top-Left in Player"),
+                "2" to (if (S.isRu) "↗️ В правом верхнем углу плеера" else "↗️ Top-Right in Player")
+            )
+            SourceDropdownSelector(
+                label = if (S.isRu) "🕒 Часы реального времени (только в плеере):" else "🕒 Clock (Only inside Player):",
+                selectedTitle = clockOpts.find { it.first == clockPosition.toString() }?.second ?: clockOpts.first().second,
+                options = clockOpts,
+                theme = theme,
+                onSelect = { onClockPositionChange(it.toIntOrNull() ?: 0) }
+            )
 
             Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -372,19 +422,6 @@ fun AccordionSettingsScreen(
                     )
                 }
             }
-
-            val clockOpts = listOf(
-                "0" to (if (S.isRu) "🚫 Выключены" else "🚫 Off"),
-                "1" to (if (S.isRu) "↖️ В левом верхнем углу экрана" else "↖️ Top-Left Corner"),
-                "2" to (if (S.isRu) "↗️ В правом верхнем углу экрана" else "↗️ Top-Right Corner")
-            )
-            SourceDropdownSelector(
-                label = if (S.isRu) "🕒 Часы реального времени на экране:" else "🕒 Real-Time Screen Clock:",
-                selectedTitle = clockOpts.find { it.first == clockPosition.toString() }?.second ?: clockOpts.first().second,
-                options = clockOpts,
-                theme = theme,
-                onSelect = { onClockPositionChange(it.toIntOrNull() ?: 0) }
-            )
 
             val devOpts = listOf(
                 "mobile" to (if (S.isRu) "📱 Смартфон / Планшет" else "📱 Smartphone / Tablet"),
@@ -417,7 +454,7 @@ fun AccordionSettingsScreen(
                 "2" to (if (S.isRu) "🛡 Макс. стабильность (12 сек)" else "🛡 Max Stability (12s)")
             )
             SourceDropdownSelector(
-                label = if (S.isRu) "Буфер видеоплеера:" else "Buffer Size:",
+                label = if (S.isRu) "Буфер ExoPlayer:" else "ExoPlayer Buffer:",
                 selectedTitle = bufOpts.find { it.first == playerBufferMode.toString() }?.second ?: bufOpts[1].second,
                 options = bufOpts,
                 theme = theme,
@@ -431,7 +468,7 @@ fun AccordionSettingsScreen(
                 "TiviMate/4.7.0 (Android TV)" to "TiviMate Android TV",
                 "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200" to "MAG250 Set-Top Box"
             )
-            SourceDropdownSelector("User-Agent:", uaOpts.find { it.first == playerDefaultUa }?.second ?: playerDefaultUa, uaOpts, theme, onPlayerUaChange)
+            SourceDropdownSelector(if (S.isRu) "Подпись запроса (User-Agent):" else "User-Agent:", uaOpts.find { it.first == playerDefaultUa }?.second ?: playerDefaultUa, uaOpts, theme, onPlayerUaChange)
         }
 
         // 3. ВНЕШНИЙ ВИД, ТЕМЫ И ЯЗЫК
@@ -502,18 +539,10 @@ fun AccordionSettingsScreen(
                             val remoteBuild = info.versionTag.substringAfterLast(".").filter { it.isDigit() }.toLongOrNull() ?: 0L
                             if ((remoteBuild in 1..installedVerCode) || info.versionTag == "v$installedVerName") {
                                 latestRelease = null
-                                updateStatus = if (S.isRu) {
-                                    "✅ У вас установлена последняя версия (v$installedVerName) — обновлений нет"
-                                } else {
-                                    "✅ You have the latest version (v$installedVerName) — no updates available"
-                                }
+                                updateStatus = if (S.isRu) "✅ У вас установлена последняя версия (v$installedVerName) — обновлений нет" else "✅ Latest version installed — no updates"
                             } else {
                                 latestRelease = info
-                                updateStatus = if (S.isRu) {
-                                    "🔥 Доступно новое обновление: ${info.versionTag}"
-                                } else {
-                                    "🔥 New update available: ${info.versionTag}"
-                                }
+                                updateStatus = if (S.isRu) "🔥 Доступно новое обновление: ${info.versionTag}" else "🔥 New update available: ${info.versionTag}"
                             }
                         }.onFailure { updateStatus = "❌ ${it.localizedMessage}" }
                     }
@@ -567,7 +596,7 @@ fun AccordionSettingsScreen(
             OutlinedTextField(value = issueDescription, onValueChange = { issueDescription = it }, label = { Text(if (S.isRu) "Опишите проблему..." else "Describe the issue...") }, modifier = Modifier.fillMaxWidth())
             Button(
                 onClick = {
-                    val reportText = "=== CCTV Plus Report ===\nVer: v$installedVerName (#$installedVerCode)\nDevice: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})\nMode: $deviceType/$controlMode | Clock: $clockPosition | Theme: ${theme.id}\nEPG: $epgStatusText\nVPortal: ${maskSensitiveKeys(vportalDiagnostic)}\nComment: $issueDescription"
+                    val reportText = "=== CCTV Plus Report ===\nVer: v$installedVerName (#$installedVerCode)\nDevice: ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})\nMode: $deviceType/$controlMode | Engine: $playerEngine | Archive: ${archiveDays}d\nEPG: $epgStatusText\nVPortal: ${maskSensitiveKeys(vportalDiagnostic)}\nComment: $issueDescription"
                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cm.setPrimaryClip(ClipData.newPlainText("CCTVBugReport", reportText))
                     reportStatus = if (S.isRu) "✅ Отчет скопирован в буфер!" else "✅ Report copied!"
