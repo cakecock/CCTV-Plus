@@ -57,6 +57,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private const val FAV_GROUP_TAG = "__FAV_CATEGORY__"
+
 class MainActivity : ComponentActivity() {
     private var webServer: SimpleQrWebServer? = null
 
@@ -194,7 +196,6 @@ class MainActivity : ComponentActivity() {
                     isLoading = false
 
                     if (children.size == 1 && !children.first().isFolder && children.first().streamUrl.isNotBlank()) {
-                        // Если внутри сразу 1 готовый видеопоток — включаем плеер!
                         currentVodStream = children.first().title to children.first().streamUrl
                         isFullscreen = true
                     } else if (children.isNotEmpty()) {
@@ -471,8 +472,6 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-// ================= ВЫПАДАЮЩЕЕ МЕНЮ (DROPDOWN) =================
-
 @Composable
 fun SourceDropdownSelector(
     label: String,
@@ -520,8 +519,6 @@ fun SourceDropdownSelector(
         }
     }
 }
-
-// ================= РАЗВОРАЧИВАЮЩАЯСЯ СТРОЧКА НАСТРОЕК (АККОРДЕОН) =================
 
 @Composable
 fun ExpandableSectionRow(
@@ -651,14 +648,39 @@ fun LiveTvScreen(
             return
         }
 
-        val groups = remember(channels, S) { listOf(S.allGroups) + channels.map { it.group }.distinct() }
+        val favChannelsCount = remember(channels, favoriteIds) {
+            channels.count { favoriteIds.contains(it.id) }
+        }
+
+        // Если есть хотя бы 1 избранный канал — добавляем категорию "⭐ Избранное" сразу после "Все категории"
+        val groups = remember(channels, favChannelsCount, S) {
+            val baseList = mutableListOf(S.allGroups)
+            if (favChannelsCount > 0) {
+                baseList.add(FAV_GROUP_TAG)
+            }
+            baseList.addAll(channels.map { it.group }.distinct())
+            baseList
+        }
+
         var selectedGroup by remember { mutableStateOf(S.allGroups) }
         var searchQuery by remember { mutableStateOf("") }
 
-        val filteredChannels = remember(channels, selectedGroup, searchQuery, S) {
+        // Если пользователь убрал последний канал из избранного, возвращаем фильтр на "Все категории"
+        LaunchedEffect(favChannelsCount) {
+            if (favChannelsCount == 0 && selectedGroup == FAV_GROUP_TAG) {
+                selectedGroup = S.allGroups
+            }
+        }
+
+        val filteredChannels = remember(channels, selectedGroup, searchQuery, favoriteIds, S) {
             channels.filter { ch ->
-                (selectedGroup == S.allGroups || ch.group == selectedGroup) &&
-                    (searchQuery.isBlank() || ch.name.contains(searchQuery, ignoreCase = true))
+                val matchGroup = when (selectedGroup) {
+                    S.allGroups -> true
+                    FAV_GROUP_TAG -> favoriteIds.contains(ch.id)
+                    else -> ch.group == selectedGroup
+                }
+                val matchSearch = searchQuery.isBlank() || ch.name.contains(searchQuery, ignoreCase = true)
+                matchGroup && matchSearch
             }
         }
 
@@ -720,6 +742,13 @@ fun LiveTvScreen(
             onValueChange = { searchQuery = it },
             placeholder = { Text(S.searchHint, color = theme.subtext) },
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = theme.primary) },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(Icons.Default.Clear, contentDescription = null, tint = theme.subtext)
+                    }
+                }
+            },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().height(52.dp)
         )
@@ -728,7 +757,16 @@ fun LiveTvScreen(
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(groups) { grp ->
-                FilterChip(selected = grp == selectedGroup, onClick = { selectedGroup = grp }, label = { Text(grp) })
+                val chipTitle = if (grp == FAV_GROUP_TAG) {
+                    "⭐ ${S.favorites} ($favChannelsCount)"
+                } else {
+                    grp
+                }
+                FilterChip(
+                    selected = grp == selectedGroup,
+                    onClick = { selectedGroup = grp },
+                    label = { Text(chipTitle) }
+                )
             }
         }
 
@@ -781,8 +819,6 @@ fun LiveTvScreen(
     }
 }
 
-// ================= ИНТЕРАКТИВНЫЙ ЭКРАН КИНОЗАЛА (VPORTAL / VOD) =================
-
 @Composable
 fun VodScreen(
     S: Strings,
@@ -808,7 +844,6 @@ fun VodScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-        // Шапка текущей папки + кнопка Назад
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -872,6 +907,13 @@ fun VodScreen(
                 onValueChange = { searchQuery = it },
                 placeholder = { Text(S.searchHint, color = theme.subtext) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = theme.primary) },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = null, tint = theme.subtext)
+                        }
+                    }
+                },
                 singleLine = true,
                 modifier = Modifier.weight(1f).height(52.dp)
             )
@@ -943,8 +985,6 @@ fun VodScreen(
     }
 }
 
-// ================= НАСТРОЙКИ СТРОЧКАМИ (ГАРМОШКА / АККОРДЕОН) =================
-
 @Composable
 fun AccordionSettingsScreen(
     S: Strings,
@@ -976,7 +1016,6 @@ fun AccordionSettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Какая строчка сейчас развернута (-1 = все свернуты)
     var expandedRow by remember { mutableStateOf(0) }
     fun toggleRow(idx: Int) {
         expandedRow = if (expandedRow == idx) -1 else idx
@@ -998,7 +1037,6 @@ fun AccordionSettingsScreen(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // СТРОЧКА 0: ВИД, ТЕМЫ И ЯЗЫК
         ExpandableSectionRow(
             title = S.catAppearance,
             isExpanded = expandedRow == 0,
@@ -1033,7 +1071,6 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // СТРОЧКА 1: ПЛЕЙЛИСТЫ M3U / M3U8
         ExpandableSectionRow(
             title = "${S.catPlaylists} (${playlists.size})",
             isExpanded = expandedRow == 1,
@@ -1051,7 +1088,20 @@ fun AccordionSettingsScreen(
                 )
             }
             OutlinedTextField(value = newPlaylistName, onValueChange = { newPlaylistName = it }, label = { Text(S.addSourceName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = newPlaylistUrl, onValueChange = { newPlaylistUrl = it }, label = { Text(S.addSourceUrl) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = newPlaylistUrl,
+                onValueChange = { newPlaylistUrl = it },
+                label = { Text(S.addSourceUrl) },
+                trailingIcon = {
+                    if (newPlaylistUrl.isNotEmpty()) {
+                        IconButton(onClick = { newPlaylistUrl = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = null)
+                        }
+                    }
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             Button(
                 onClick = {
                     if (newPlaylistUrl.isNotBlank()) {
@@ -1079,7 +1129,6 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // СТРОЧКА 2: ТЕЛЕПРОГРАММА EPG
         ExpandableSectionRow(
             title = S.catEpg,
             isExpanded = expandedRow == 2,
@@ -1105,7 +1154,20 @@ fun AccordionSettingsScreen(
             SourceDropdownSelector(label = S.activeEpgLabel, selectedTitle = curEpgTitle, options = epgOptions, theme = theme, onSelect = onSelectEpg)
 
             OutlinedTextField(value = newEpgName, onValueChange = { newEpgName = it }, label = { Text(S.addSourceName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = newEpgUrl, onValueChange = { newEpgUrl = it }, label = { Text(S.addSourceUrl) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = newEpgUrl,
+                onValueChange = { newEpgUrl = it },
+                label = { Text(S.addSourceUrl) },
+                trailingIcon = {
+                    if (newEpgUrl.isNotEmpty()) {
+                        IconButton(onClick = { newEpgUrl = "" }) {
+                            Icon(Icons.Default.Clear, contentDescription = null)
+                        }
+                    }
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             Button(
                 onClick = {
                     if (newEpgUrl.isNotBlank()) {
@@ -1133,7 +1195,6 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // СТРОЧКА 3: ПОРТАЛЫ (VPORTAL И STALKER)
         ExpandableSectionRow(
             title = S.catPortals,
             isExpanded = expandedRow == 3,
@@ -1141,9 +1202,35 @@ fun AccordionSettingsScreen(
             onToggle = { toggleRow(3) }
         ) {
             Text("🎬 VPortal (TVlider / iLook)", fontWeight = FontWeight.Bold, color = theme.primary)
-            OutlinedTextField(value = vportalUrl, onValueChange = onVportalChange, label = { Text("portal::[key:...]http://.../api/v1/") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = vportalUrl,
+                onValueChange = onVportalChange,
+                label = { Text("portal::[key:...]http://.../api/v1/") },
+                trailingIcon = {
+                    if (vportalUrl.isNotEmpty()) {
+                        IconButton(onClick = { onVportalChange("") }) {
+                            Icon(Icons.Default.Clear, contentDescription = null)
+                        }
+                    }
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             Text("📡 Stalker Portal", fontWeight = FontWeight.Bold, color = theme.primary)
-            OutlinedTextField(value = stalkerUrl, onValueChange = onStalkerUrlChange, label = { Text("http://.../stalker_portal/c/") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(
+                value = stalkerUrl,
+                onValueChange = onStalkerUrlChange,
+                label = { Text("http://.../stalker_portal/c/") },
+                trailingIcon = {
+                    if (stalkerUrl.isNotEmpty()) {
+                        IconButton(onClick = { onStalkerUrlChange("") }) {
+                            Icon(Icons.Default.Clear, contentDescription = null)
+                        }
+                    }
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
             OutlinedTextField(value = stalkerMac, onValueChange = onStalkerMacChange, label = { Text("MAC (00:1A:79:XX:XX:XX)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Button(onClick = onSaveAndReload, modifier = Modifier.fillMaxWidth().height(50.dp)) {
                 Text(S.saveAndReloadBtn, fontWeight = FontWeight.Bold)
@@ -1170,7 +1257,6 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // СТРОЧКА 4: QR-ПУЛЬТ ДЛЯ ТЕЛЕФОНА
         ExpandableSectionRow(
             title = S.catQr,
             isExpanded = expandedRow == 4,
@@ -1193,7 +1279,6 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // СТРОЧКА 5: АВТООБНОВЛЕНИЕ ПРИЛОЖЕНИЯ С GITHUB
         ExpandableSectionRow(
             title = if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)",
             isExpanded = expandedRow == 5,
