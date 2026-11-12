@@ -89,22 +89,12 @@ fun SourceDropdownSelector(
 }
 
 @Composable
-fun SourceDropdownSelector(
-    label: String,
-    selectedTitle: String,
-    options: List<Pair<String, String>>,
+fun ExpandableSectionRow(
+    title: String,
+    isExpanded: Boolean,
     theme: AppThemePalette,
-    onSelect: (String) -> Unit
-) = SourceDropdownSelector(label, selectedTitle, options, theme, onSelect, Modifier)
-
-@Composable
-fun SourceDropdownSelector(
-    label: String,
-    selectedTitle: String,
-    options: List<Pair<String, String>>,
-    theme: AppThemePalette,
-    onSelect: (String) -> Unit,
-    modifier: Modifier
+    onToggle: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = theme.card),
@@ -409,8 +399,8 @@ fun AccordionSettingsScreen(
             SourceDropdownSelector("User-Agent:", uaOpts.find { it.first == playerDefaultUa }?.second ?: playerDefaultUa, uaOpts, theme, onPlayerUaChange)
         }
 
-        // 3. УСТРОЙСТВО И 18+
-        ExpandableSectionRow(if (S.isRu) "🎮 Устройство и 18+" else "🎮 Device & 18+", expandedRow == 2, theme, { toggleRow(2) }) {
+        // 3. УСТРОЙСТВО 
+        ExpandableSectionRow(if (S.isRu) "🎮 Устройство" else "🎮 Device", expandedRow == 2, theme, { toggleRow(2) }) {
             val devOpts = listOf("mobile" to (if (S.isRu) "📱 Смартфон" else "📱 Phone"), "tv" to (if (S.isRu) "📺 Телевизор (ТВ)" else "📺 Android TV"))
             SourceDropdownSelector(if (S.isRu) "Устройство:" else "Device:", devOpts.find { it.first == deviceType }?.second ?: devOpts.first().second, devOpts, theme, onDeviceTypeChange)
 
