@@ -1,4 +1,4 @@
-name: Build CCTV Plus APK
+name: Build CCTV Plus v2.0 APK
 
 on:
   push:
@@ -171,6 +171,7 @@ jobs:
           org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           android.nonTransitiveRClass=true
+          android.suppressUnsupportedCompileSdk=35
           EOF
 
           cat << 'EOF' > app/build.gradle.kts
@@ -181,14 +182,14 @@ jobs:
 
           android {
               namespace = "com.myiptv.app"
-              compileSdk = 34
+              compileSdk = 35
 
               defaultConfig {
                   applicationId = "com.myiptv.app"
                   minSdk = 29
                   targetSdk = 34
                   versionCode = ${{ github.run_number }}
-                  versionName = "1.${{ github.run_number }}"
+                  versionName = "2.0.${{ github.run_number }}"
               }
 
               signingConfigs {
@@ -240,10 +241,11 @@ jobs:
               implementation("androidx.compose.material3:material3")
               implementation("androidx.compose.material:material-icons-extended")
               implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
-              implementation("androidx.media3:media3-exoplayer:1.4.0")
-              implementation("androidx.media3:media3-exoplayer-hls:1.4.0")
-              implementation("androidx.media3:media3-exoplayer-dash:1.4.0")
-              implementation("androidx.media3:media3-ui:1.4.0")
+              implementation("androidx.media3:media3-exoplayer:1.5.0")
+              implementation("androidx.media3:media3-exoplayer-hls:1.5.0")
+              implementation("androidx.media3:media3-exoplayer-dash:1.5.0")
+              implementation("androidx.media3:media3-ui:1.5.0")
+              implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
               implementation("com.squareup.okhttp3:okhttp:4.12.0")
               implementation("io.coil-kt:coil-compose:2.7.0")
               implementation("com.google.zxing:core:3.5.3")
@@ -269,9 +271,9 @@ jobs:
       - name: Publish Release for In-App Auto-Update
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.${{ github.run_number }}
-          name: "CCTV Plus v1.${{ github.run_number }}"
-          body: "Автоматическая сборка обновления #${{ github.run_number }}"
+          tag_name: v2.0.${{ github.run_number }}
+          name: "CCTV Plus v2.0.${{ github.run_number }}"
+          body: "CCTV Plus v2.0 (Build #${{ github.run_number }})"
           make_latest: true
           files: /tmp/CCTV-Plus.apk
 
@@ -282,7 +284,7 @@ jobs:
           git checkout -- .
           git pull --rebase origin main || git pull --rebase origin master || true
           cp /tmp/CCTV-Plus.apk ./CCTV-Plus.apk
-          printf '{"tag_name":"v1.%s","version_code":%s,"repo":"%s"}\n' "${{ github.run_number }}" "${{ github.run_number }}" "${{ github.repository }}" > version.json
+          printf '{"tag_name":"v2.0.%s","version_code":%s,"repo":"%s"}\n' "${{ github.run_number }}" "${{ github.run_number }}" "${{ github.repository }}" > version.json
           git add -f CCTV-Plus.apk version.json
-          git commit -m "Publish CCTV-Plus.apk v1.${{ github.run_number }} [skip ci]" || true
+          git commit -m "Publish CCTV-Plus.apk v2.0.${{ github.run_number }} [skip ci]" || true
           git push || true
