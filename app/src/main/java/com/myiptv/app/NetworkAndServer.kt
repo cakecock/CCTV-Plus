@@ -22,16 +22,28 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.URLDecoder
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 import kotlin.concurrent.thread
 
+// Умная нормализация названия канала (убирает HD, FHD, 4K, скобки и пробелы для точного совпадения с EPG)
+fun normalizeChannelKey(raw: String): String {
+    var s = raw.lowercase().trim()
+    s = s.replace(Regex("\\[.*?\\]|\\(.*?\\)"), " ")
+    for (tag in listOf("uhd", "fhd", "hd", "sd", "4k", "50fps", "hevc", "orig", "плюс", "канал")) {
+        s = s.replace(Regex("\\b$tag\\b"), " ")
+    }
+    return s.filter { it.isLetterOrDigit() }
+}
+
 object NetworkLoader {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(40, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -83,17 +95,20 @@ object NetworkLoader {
                     when {
                         t.startsWith("#EXTM3U", ignoreCase = true) -> {
                             val attrs = attrRegex.findAll(t).associate { it.groupValues[1].lowercase() to it.groupValues[2] }
-                            embeddedEpgUrl = attrs["url-tvg"] ?: attrs["x-tvg-url"] ?: attrs["tvg-url"]
+                            embeddedEpgUrl = attrs["url-tvg"]?.takeIf { it.isNotBlank() }
+                                ?: attrs["x-tvg-url"]?.takeIf { it.isNotBlank() }
+                                ?: attrs["tvg-url"]?.takeIf { it.isNotBlank() }
                         }
                         t.startsWith("#EXTINF:") -> {
                             name = t.substringAfterLast(",").trim()
                             val attrs = attrRegex.findAll(t).associate { it.groupValues[1].lowercase() to it.groupValues[2] }
-                            logo = attrs["tvg-logo"]
-                            epgId = attrs["tvg-id"] ?: attrs["tvg-name"]
+                            logo = attrs["tvg-logo"]?.takeIf { it.isNotBlank() }
+                            // Берем непустой tvg-id или tvg-name
+                            epgId = attrs["tvg-id"]?.takeIf { it.isNotBlank() }
+                                ?: attrs["tvg-name"]?.takeIf { it.isNotBlank() }
                             group = attrs["group-title"]?.takeIf { it.isNotBlank() } ?: group
-                            catchupSource = attrs["catchup-source"]
+                            catchupSource = attrs["catchup-source"]?.takeIf { it.isNotBlank() }
 
-                            // Определяем, есть ли у канала реальная поддержка архива в плейлисте
                             val explicitDays = attrs["catchup-days"]?.toIntOrNull()
                                 ?: attrs["tvg-rec"]?.toIntOrNull()
                                 ?: attrs["timeshift"]?.toIntOrNull()
@@ -112,7 +127,9 @@ object NetworkLoader {
                                 if (isVod) {
                                     movies.add(VodMovie("m3u_vod_$num", name, group, logo, "", "", "", t))
                                 } else {
-                                    channels.add(Channel("ch_$num", num, name, group, logo, t, epgId, ua, catchupDays, catchupSource))
+                                    // У каналов TVlider/Edem с личным ключом в потоке архив работает по умолчанию
+                                    val finalCatchup = if (catchupDays > 0) catchupDays else if (t.contains("/iptv/")) 3 else 0
+                                    channels.add(Channel("ch_$num", num, name, group, logo, t, epgId, ua, finalCatchup, catchupSource))
                                 }
                                 num++
                                 name = ""; logo = null; epgId = null; ua = null; catchupDays = 0; catchupSource = null
@@ -209,19 +226,7 @@ object NetworkLoader {
             if (rootObj != null) {
                 val rootStream = extractStreamUrl(rootObj, baseUrl)
                 if (rootStream.isNotEmpty()) {
-                    out.add(
-                        VodMovie(
-                            id = "vp_direct_root",
-                            title = rootObj.optString("title", rootObj.optString("name", "▶ Смотреть")),
-                            category = "Видео",
-                            posterUrl = rootObj.optString("poster", rootObj.optString("cover")),
-                            description = rootObj.optString("description", ""),
-                            year = rootObj.optString("year", ""),
-                            rating = rootObj.optString("rating", ""),
-                            streamUrl = rootStream,
-                            isFolder = false
-                        )
-                    )
+                    out.add(VodMovie("vp_direct_root", rootObj.optString("title", rootObj.optString("name", "▶ Смотреть")), "Видео", rootObj.optString("poster"), rootObj.optString("description", ""), rootObj.optString("year", ""), rootObj.optString("rating", ""), rootStream, false))
                 }
             }
 
@@ -242,18 +247,8 @@ object NetworkLoader {
                 val itemType = item.optString("type", "").lowercase()
                 if (itemType == "search" || itemType == "input") continue
 
-                val title = item.optString("title")
-                    .ifEmpty { item.optString("name") }
-                    .ifEmpty { item.optString("label") }
-                    .ifEmpty { "Серия #${i + 1}" }
-
-                val poster = item.optString("poster")
-                    .ifEmpty { item.optString("logo") }
-                    .ifEmpty { item.optString("icon") }
-                    .ifEmpty { item.optString("cover") }
-                    .ifEmpty { item.optString("img") }
-                    .ifEmpty { item.optString("pic") }
-
+                val title = item.optString("title").ifEmpty { item.optString("name") }.ifEmpty { item.optString("label") }.ifEmpty { "Серия #${i + 1}" }
+                val poster = item.optString("poster").ifEmpty { item.optString("logo") }.ifEmpty { item.optString("icon") }.ifEmpty { item.optString("cover") }.ifEmpty { item.optString("img") }.ifEmpty { item.optString("pic") }
                 val desc = item.optString("description").ifEmpty { item.optString("plot") }
                 val year = item.optString("year", "")
                 val rating = item.optString("rating", item.optString("rating_kp", ""))
@@ -347,29 +342,52 @@ object NetworkLoader {
         list
     }
 
+    // Быстрый математический разбор дат XMLTV (например: "20261112153000 +0300")
+    private fun parseXmlDateFast(raw: String?): Long {
+        if (raw.isNullOrBlank() || raw.length < 14) return 0L
+        return runCatching {
+            val year = raw.substring(0, 4).toInt()
+            val month = raw.substring(4, 6).toInt() - 1
+            val day = raw.substring(6, 8).toInt()
+            val hour = raw.substring(8, 10).toInt()
+            val min = raw.substring(10, 12).toInt()
+            val sec = raw.substring(12, 14).toInt()
+
+            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+            cal.set(year, month, day, hour, min, sec)
+            cal.set(Calendar.MILLISECOND, 0)
+            var utcMs = cal.timeInMillis
+
+            val tzPart = raw.substring(14).trim()
+            if (tzPart.length >= 5 && (tzPart[0] == '+' || tzPart[0] == '-')) {
+                val sign = if (tzPart[0] == '+') 1 else -1
+                val cleanTz = tzPart.substring(1).replace(":", "")
+                val tzH = cleanTz.substring(0, 2).toIntOrNull() ?: 0
+                val tzM = cleanTz.substring(2, 4).toIntOrNull() ?: 0
+                val offsetMs = sign * ((tzH * 3600L + tzM * 60L) * 1000L)
+                utcMs -= offsetMs
+            }
+            utcMs
+        }.getOrDefault(0L)
+    }
+
+    // Полная загрузка телепрограммы без преждевременного обрыва (читает весь файл и захватывает текущий эфир!)
     suspend fun loadFullEpgSchedule(epgUrl: String): Map<String, List<EpgProgramItem>> = withContext(Dispatchers.IO) {
         val rawById = mutableMapOf<String, MutableList<EpgProgramItem>>()
-        val displayNameToId = mutableMapOf<String, String>()
+        val aliasToId = mutableMapOf<String, String>()
         val nowMs = System.currentTimeMillis()
-        val windowStart = nowMs - 48L * 3600L * 1000L
-        val windowEnd = nowMs + 24L * 3600L * 1000L
-        val sdfWithTz = SimpleDateFormat("yyyyMMddHHmmss Z", Locale.US)
-        val sdfNoTz = SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
+        // Берем окно: 18 часов назад (для архива за сегодня) и 12 часов вперед (текущий эфир + далее)
+        val windowStart = nowMs - 18L * 3600L * 1000L
+        val windowEnd = nowMs + 12L * 3600L * 1000L
         val timeFmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
         val shortTimeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
-
-        fun parseXmlTime(raw: String?): Long {
-            if (raw.isNullOrBlank()) return 0L
-            return runCatching { sdfWithTz.parse(raw.trim())?.time ?: 0L }.getOrElse {
-                runCatching { sdfNoTz.parse(raw.trim().take(14))?.time ?: 0L }.getOrDefault(0L)
-            }
-        }
 
         runCatching {
             val req = Request.Builder().url(epgUrl).header("User-Agent", "Mozilla/5.0").build()
             client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@use
                 val rawStream = resp.body?.byteStream() ?: return@use
-                val inputStream: InputStream = if (epgUrl.endsWith(".gz", true)) GZIPInputStream(rawStream) else rawStream
+                val inputStream: InputStream = if (epgUrl.lowercase().contains(".gz")) GZIPInputStream(rawStream) else rawStream
                 val parser = XmlPullParserFactory.newInstance().newPullParser()
                 parser.setInput(inputStream, "UTF-8")
 
@@ -380,10 +398,10 @@ object NetworkLoader {
                 var progChannelId: String? = null
                 var progStart = 0L
                 var progStop = 0L
+                var isProgInWindow = false
                 var insideTitle = false
-                var totalSaved = 0
 
-                while (eventType != XmlPullParser.END_DOCUMENT && totalSaved < 35000) {
+                while (eventType != XmlPullParser.END_DOCUMENT) {
                     when (eventType) {
                         XmlPullParser.START_TAG -> {
                             when (parser.name) {
@@ -391,26 +409,30 @@ object NetworkLoader {
                                 "display-name" -> if (curChannelTagId != null) insideDisplayName = true
                                 "programme" -> {
                                     progChannelId = parser.getAttributeValue(null, "channel")
-                                    progStart = parseXmlTime(parser.getAttributeValue(null, "start"))
-                                    progStop = parseXmlTime(parser.getAttributeValue(null, "stop"))
+                                    progStart = parseXmlDateFast(parser.getAttributeValue(null, "start"))
+                                    progStop = parseXmlDateFast(parser.getAttributeValue(null, "stop"))
+                                    isProgInWindow = progStop >= windowStart && progStart <= windowEnd
                                 }
-                                "title" -> if (progChannelId != null && progStop in windowStart..windowEnd) {
+                                "title" -> if (progChannelId != null && isProgInWindow) {
                                     insideTitle = true
                                 }
                             }
                         }
                         XmlPullParser.TEXT -> {
                             if (insideDisplayName && curChannelTagId != null) {
-                                val dName = parser.text.trim().lowercase()
-                                if (dName.isNotEmpty()) displayNameToId[dName] = curChannelTagId!!
+                                val rawName = parser.text.trim()
+                                if (rawName.isNotEmpty()) {
+                                    aliasToId[rawName.lowercase()] = curChannelTagId!!
+                                    val norm = normalizeChannelKey(rawName)
+                                    if (norm.isNotEmpty()) aliasToId[norm] = curChannelTagId!!
+                                }
                                 insideDisplayName = false
-                            } else if (insideTitle && progChannelId != null) {
+                            } else if (insideTitle && progChannelId != null && isProgInWindow) {
                                 val title = parser.text.trim()
                                 val list = rawById.getOrPut(progChannelId!!) { mutableListOf() }
-                                if (list.size < 45) {
+                                if (list.size < 60) {
                                     val tLabel = "${timeFmt.format(Date(progStart))} - ${shortTimeFmt.format(Date(progStop))}"
                                     list.add(EpgProgramItem(title, progStart, progStop, tLabel))
-                                    totalSaved++
                                 }
                                 insideTitle = false
                             }
@@ -418,7 +440,7 @@ object NetworkLoader {
                         XmlPullParser.END_TAG -> {
                             when (parser.name) {
                                 "channel" -> { curChannelTagId = null; insideDisplayName = false }
-                                "programme" -> { progChannelId = null; insideTitle = false }
+                                "programme" -> { progChannelId = null; isProgInWindow = false; insideTitle = false }
                             }
                         }
                     }
@@ -432,10 +454,12 @@ object NetworkLoader {
             val sorted = list.sortedBy { it.startMs }
             finalMap[id] = sorted
             finalMap[id.lowercase()] = sorted
+            val normId = normalizeChannelKey(id)
+            if (normId.isNotEmpty()) finalMap[normId] = sorted
         }
-        displayNameToId.forEach { (dName, id) ->
+        aliasToId.forEach { (aliasKey, id) ->
             rawById[id]?.let { list ->
-                finalMap[dName] = list.sortedBy { it.startMs }
+                finalMap[aliasKey] = list.sortedBy { it.startMs }
             }
         }
         finalMap
