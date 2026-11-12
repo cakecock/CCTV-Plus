@@ -155,9 +155,13 @@ fun AccordionSettingsScreen(
     deviceType: String,
     controlMode: String,
     clockPosition: Int,
+    parentalEnabled: Boolean,
+    parentalPin: String,
     onDeviceTypeChange: (String) -> Unit,
     onControlModeChange: (String) -> Unit,
     onClockPositionChange: (Int) -> Unit,
+    onParentalEnabledChange: (Boolean) -> Unit,
+    onParentalPinChange: (String) -> Unit,
     onSelectTheme: (AppThemePalette) -> Unit,
     onToggleLanguage: () -> Unit,
     playerResizeMode: Int,
@@ -338,11 +342,28 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 2. ПЛЕЕР, ЧАСЫ, УСТРОЙСТВО И УПРАВЛЕНИЕ
+        // 2. ПЛЕЕР, ЧАСЫ, PIN-КОД И УПРАВЛЕНИЕ
         ExpandableSectionRow(S.catPlayer, expandedRow == 1, theme, { toggleRow(1) }) {
             Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(if (S.isRu) "Открывать канал сразу на полный экран при выборе" else "Open channel in fullscreen on tap", fontWeight = FontWeight.Bold, color = theme.text, modifier = Modifier.weight(1f))
                 Switch(checked = openFullscreenOnTap, onCheckedChange = onAutoFsChange)
+            }
+
+            // Родительский контроль (PIN-код на 18+)
+            Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(if (S.isRu) "🔒 Родительский контроль (PIN-код на 18+)" else "🔒 Parental Control (18+ PIN)", fontWeight = FontWeight.Bold, color = theme.text, modifier = Modifier.weight(1f))
+                    Switch(checked = parentalEnabled, onCheckedChange = onParentalEnabledChange)
+                }
+                if (parentalEnabled) {
+                    OutlinedTextField(
+                        value = parentalPin,
+                        onValueChange = { if (it.length <= 4) onParentalPinChange(it.filter { c -> c.isDigit() }) },
+                        label = { Text(if (S.isRu) "PIN-код (4 цифры, по умолчанию 0000)" else "4-Digit PIN") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
             }
 
             val clockOpts = listOf(
@@ -359,13 +380,13 @@ fun AccordionSettingsScreen(
             )
 
             val devOpts = listOf(
-                "mobile" to (if (S.isRu) "📱 Смартфон / Планшет (кнопки Каналов и Архива в плеере)" else "📱 Smartphone / Tablet"),
-                "tv" to (if (S.isRu) "📺 Телевизор / ТВ-приставка (без лишних кнопок на экране)" else "📺 Android TV / TV Box")
+                "mobile" to (if (S.isRu) "📱 Смартфон / Планшет" else "📱 Smartphone / Tablet"),
+                "tv" to (if (S.isRu) "📺 Телевизор / ТВ-приставка" else "📺 Android TV / TV Box")
             )
             SourceDropdownSelector(if (S.isRu) "Тип устройства:" else "Device Type:", devOpts.find { it.first == deviceType }?.second ?: devOpts.first().second, devOpts, theme, onDeviceTypeChange)
 
             val ctrlOpts = listOf(
-                "touch" to (if (S.isRu) "👆 Сенсорное управление (Касания)" else "👆 Touch Screen"),
+                "touch" to (if (S.isRu) "👆 Сенсорное (Свайпы яркости и громкости)" else "👆 Touch (Brightness & Volume Swipes)"),
                 "remote" to (if (S.isRu) "🎮 Пульт ДУ (Кнопки навигации)" else "🎮 TV Remote")
             )
             SourceDropdownSelector(if (S.isRu) "Режим управления:" else "Control Mode:", ctrlOpts.find { it.first == controlMode }?.second ?: ctrlOpts.first().second, ctrlOpts, theme, onControlModeChange)
@@ -460,7 +481,7 @@ fun AccordionSettingsScreen(
             if (backupStatus.isNotBlank()) Text(backupStatus, fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
         }
 
-        // 5. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ
+        // 5. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ (С ПРОВЕРКОЙ «ОБНОВЛЕНИЙ НЕТ»)
         ExpandableSectionRow(if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)", expandedRow == 4, theme, { toggleRow(4) }) {
             Text(if (S.isRu) "Установленная версия: v$installedVerName (Build #$installedVerCode)" else "Installed: v$installedVerName (Build #$installedVerCode)", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = theme.subtext)
             Button(
@@ -470,8 +491,24 @@ fun AccordionSettingsScreen(
                         updateStatus = if (S.isRu) "🔍 Проверяем GitHub..." else "🔍 Checking GitHub..."
                         val res = GitHubUpdater.checkLatestRelease()
                         isUpdating = false
-                        res.onSuccess { latestRelease = it; updateStatus = "✅ Доступна сборка: ${it.versionTag}" }
-                            .onFailure { updateStatus = "❌ ${it.localizedMessage}" }
+                        res.onSuccess { info ->
+                            val remoteBuild = info.versionTag.substringAfterLast(".").filter { it.isDigit() }.toLongOrNull() ?: 0L
+                            if ((remoteBuild in 1..installedVerCode) || info.versionTag == "v$installedVerName") {
+                                latestRelease = null
+                                updateStatus = if (S.isRu) {
+                                    "✅ У вас установлена последняя версия (v$installedVerName) — обновлений нет"
+                                } else {
+                                    "✅ You have the latest version (v$installedVerName) — no updates available"
+                                }
+                            } else {
+                                latestRelease = info
+                                updateStatus = if (S.isRu) {
+                                    "🔥 Доступно новое обновление: ${info.versionTag}"
+                                } else {
+                                    "🔥 New update available: ${info.versionTag}"
+                                }
+                            }
+                        }.onFailure { updateStatus = "❌ ${it.localizedMessage}" }
                     }
                 },
                 enabled = !isUpdating,
