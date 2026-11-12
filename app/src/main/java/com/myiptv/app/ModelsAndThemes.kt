@@ -59,30 +59,28 @@ val AppChangelogHistory = listOf(
         version = "CURRENT",
         date = "12.11.2026",
         changesRu = listOf(
-            "📺 Прозрачный 3-колоночный ТВ-Гид поверх видео (режим TiviMate: Категории -> Каналы -> Программа и Архив).",
-            "🏟 Режим «Мультиэкран (Multi-View)»: одновременный просмотр до 4 телеканалов на одном экране с переключением звука.",
-            "👆 Свайпы в полноэкранном плеере (слева — Яркость, справа — Громкость) + режим «Картинка в картинке» (PiP).",
-            "🔊 Выбор звуковой дорожки (озвучки) в плеере + Родительский контроль (PIN-код на категории 18+).",
-            "🔄 Умная проверка обновлений: показ статуса «Обновлений нет», если уже установлена актуальная версия."
+            "🎬 Добавлен блок «Выбор видеоплеера (Движок)»: переключение между встроенным ExoPlayer (Media3), Системным плеером Android (VideoView) и Внешним плеером (VLC, MX Player, Vimu).",
+            "⏪ Добавлена настройка глубины архива телепрограммы: перемотка на 1, 3 или 5 дней назад + автопрокрутка списка передач к текущему прямому эфиру.",
+            "🕒 Экранные часы реального времени теперь отображаются только внутри видеоплеера, не закрывая меню приложения.",
+            "📅 Добавлены встроенные источники EPG (TVLider/Edem и IPTVx.one) в выпадающий список и улучшено сопоставление каналов."
         ),
         changesEn = listOf(
-            "📺 Transparent 3-column TV Guide overlay over live video (TiviMate style).",
-            "🏟 Multi-View mode: watch up to 4 channels simultaneously on one screen.",
-            "👆 Swipe gestures in fullscreen (left for Brightness, right for Volume) + Picture-in-Picture (PiP) mode.",
-            "🔊 Audio track selector in player + Parental Control PIN for 18+ categories.",
-            "🔄 Smart update check: displays 'No updates available' when already on the latest version."
+            "🎬 Added Video Player Engine selector: Built-in ExoPlayer (Media3), Native Android VideoView, or External Player (VLC, MX Player, Vimu).",
+            "⏪ Added Catch-Up Archive depth setting (1, 3, or 5 days back) + auto-scroll to current live broadcast in EPG.",
+            "🕒 Real-time clock now appears strictly inside the video player.",
+            "📅 Added built-in EPG presets (TVLider & IPTVx.one) and improved channel matching."
         )
     ),
     ChangelogRelease(
-        version = "v1.48",
+        version = "v1.50",
         date = "12.11.2026",
         changesRu = listOf(
-            "📺 Интерактивная плашка текущей передачи и архива рядом с мини-плеером.",
-            "📊 Плавная шкала времени эфира + ползунок перемотки архива + экранные часы реального времени."
+            "📺 Прозрачный 3-колоночный ТВ-Гид поверх видео (режим TiviMate) + Мультиэкран на 4 канала.",
+            "👆 Свайпы яркости и громкости в плеере + режим «Картинка в картинке» (PiP) + выбор звуковой дорожки и PIN-код на 18+."
         ),
         changesEn = listOf(
-            "📺 Interactive live program & archive info card next to the mini-player.",
-            "📊 Smooth live progress bar + archive seek slider + real-time screen clock."
+            "📺 Transparent 3-column TV Guide overlay + 4-channel Multi-View.",
+            "👆 Brightness/Volume swipes + PiP mode + Audio track selector & 18+ PIN."
         )
     )
 )
@@ -227,7 +225,7 @@ val RuStrings = Strings(
     reconnecting = "Поток прервался, переподключаемся...",
     catSourcesGroup = "📡 Источники и Контент (Плейлисты, EPG, Порталы, QR)",
     catAppearance = "🎨 Внешний вид, Темы и Язык",
-    catPlayer = "⚙️ Плеер, Часы, PIN-код и Управление",
+    catPlayer = "⚙️ Выбор плеера, Архив, Часы и Управление",
     catPlaylists = "📺 Плейлисты (M3U / M3U8)",
     catEpg = "📅 Телепрограмма (EPG)",
     catPortals = "🎬 Порталы (VPortal и Stalker)",
@@ -264,7 +262,7 @@ val EnStrings = Strings(
     reconnecting = "Stream dropped, reconnecting...",
     catSourcesGroup = "📡 Sources & Content (Playlists, EPG, Portals, QR)",
     catAppearance = "🎨 Appearance, Themes & Language",
-    catPlayer = "⚙️ Player, Clock, PIN & Controls",
+    catPlayer = "⚙️ Player Engine, Archive, Clock & Controls",
     catPlaylists = "📺 Playlists (M3U / M3U8)",
     catEpg = "📅 TV Guide (EPG)",
     catPortals = "🎬 Portals (VPortal & Stalker)",
@@ -325,6 +323,8 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     root.put("device_type", prefs.getString("device_type", "mobile"))
     root.put("control_mode", prefs.getString("control_mode", "touch"))
     root.put("clock_pos", prefs.getInt("clock_pos", 0))
+    root.put("player_engine", prefs.getInt("player_engine", 0))
+    root.put("archive_days", prefs.getInt("archive_days", 3))
     root.put("parental_enabled", prefs.getBoolean("parental_enabled", false))
     root.put("parental_pin", prefs.getString("parental_pin", "0000"))
     root.put("theme_id", prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
@@ -359,6 +359,8 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
         .putString("device_type", root.optString("device_type", "mobile"))
         .putString("control_mode", root.optString("control_mode", "touch"))
         .putInt("clock_pos", root.optInt("clock_pos", 0))
+        .putInt("player_engine", root.optInt("player_engine", 0))
+        .putInt("archive_days", root.optInt("archive_days", 3))
         .putBoolean("parental_enabled", root.optBoolean("parental_enabled", false))
         .putString("parental_pin", root.optString("parental_pin", "0000"))
         .putString("theme_id", root.optString("theme_id", AppThemePalette.DARK_EMERALD.id))
