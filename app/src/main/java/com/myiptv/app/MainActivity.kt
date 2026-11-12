@@ -87,6 +87,20 @@ fun PlayerClockBadge(clockPosition: Int, currentTimeMs: Long, accentColor: Color
     }
 }
 
+@Composable
+fun PlayerActionPill(text: String, accentColor: Color = Color.White, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0x55222834))
+            .border(1.dp, accentColor.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 11.dp, vertical = 6.dp)
+    ) {
+        Text(text, color = accentColor, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+    }
+}
+
 class MainActivity : ComponentActivity() {
     private var webServer: SimpleQrWebServer? = null
 
@@ -163,6 +177,7 @@ class MainActivity : ComponentActivity() {
             var showAudioTracksDialog by remember { mutableStateOf(false) }
             var showHiddenGroupsDialog by remember { mutableStateOf(false) }
             var showSleepDialog by remember { mutableStateOf(false) }
+            var showPlayerQuickMenu by remember { mutableStateOf(false) }
             var epgDialogChannel by remember { mutableStateOf<Channel?>(null) }
             var showQuickChannelPicker by remember { mutableStateOf(false) }
 
@@ -182,7 +197,6 @@ class MainActivity : ComponentActivity() {
             val visibleChannels = remember(channels, hiddenGroups) { channels.filterNot { hiddenGroups.contains(it.group) } }
             val allGroupsList = remember(channels) { channels.map { it.group }.distinct() }
 
-            // Секундный таймер: часы + таймер сна + проверка напоминаний EPG
             LaunchedEffect(Unit) {
                 while (true) {
                     val now = System.currentTimeMillis()
@@ -204,7 +218,6 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            // Набор номера канала цифрами на пульте (0-9)
             LaunchedEffect(digitBuffer) {
                 if (digitBuffer.isNotEmpty()) {
                     delay(1400L)
@@ -337,17 +350,13 @@ class MainActivity : ComponentActivity() {
                 val list = visibleChannels.ifEmpty { channels }
                 if (list.isEmpty()) return
                 val curIdx = list.indexOfFirst { it.id == currentChannel?.id }.let { if (it < 0) 0 else it }
-                val nextIdx = (curIdx + step + list.size) % list.size
-                selectChannelWithPinCheck(list[nextIdx])
+                selectChannelWithPinCheck(list[(curIdx + step + list.size) % list.size])
             }
 
             fun toggleReminderFor(ch: Channel, prog: EpgProgramItem) {
                 val exists = reminders.any { it.channelId == ch.id && it.startMs == prog.startMs }
-                reminders = if (exists) {
-                    reminders.filterNot { it.channelId == ch.id && it.startMs == prog.startMs }
-                } else {
-                    reminders + ProgramReminder("${ch.id}_${prog.startMs}", ch.id, ch.name, prog.title, prog.startMs)
-                }
+                reminders = if (exists) reminders.filterNot { it.channelId == ch.id && it.startMs == prog.startMs }
+                else reminders + ProgramReminder("${ch.id}_${prog.startMs}", ch.id, ch.name, prog.title, prog.startMs)
             }
 
             fun startVodPlayback(key: String, title: String, poster: String?, streamUrl: String, seekMs: Long) {
@@ -373,9 +382,7 @@ class MainActivity : ComponentActivity() {
                     }
                     return
                 }
-                if (!item.isFolder && item.streamUrl.isNotBlank()) {
-                    selectedVodForDetails = item; return
-                }
+                if (!item.isFolder && item.streamUrl.isNotBlank()) { selectedVodForDetails = item; return }
                 if (vportalUrl.isBlank()) return
                 scope.launch {
                     isLoading = true
@@ -425,9 +432,8 @@ class MainActivity : ComponentActivity() {
 
             val activeArchiveUrl = remember(currentChannel, activeArchiveProgram, archiveSeekOffsetSec) {
                 val ch = currentChannel; val prog = activeArchiveProgram
-                if (ch != null && prog != null) {
-                    buildArchiveStreamUrl(ch, (prog.startMs + archiveSeekOffsetSec * 1000L).coerceAtMost(prog.stopMs - 10000L), prog.stopMs)
-                } else null
+                if (ch != null && prog != null) buildArchiveStreamUrl(ch, (prog.startMs + archiveSeekOffsetSec * 1000L).coerceAtMost(prog.stopMs - 10000L), prog.stopMs)
+                else null
             }
 
             MaterialTheme(colorScheme = colorScheme) {
@@ -466,25 +472,22 @@ class MainActivity : ComponentActivity() {
 
                         if (showHiddenGroupsDialog) {
                             HiddenCategoriesDialog(
-                                S = S, theme = themePalette, allGroups = allGroupsList, hiddenGroups = hiddenGroups,
-                                onToggleGroup = { grp ->
-                                    hiddenGroups = if (hiddenGroups.contains(grp)) hiddenGroups - grp else hiddenGroups + grp
-                                    saveHiddenGroups(prefs, hiddenGroups)
-                                },
+                                S, themePalette, allGroupsList, hiddenGroups,
+                                onToggleGroup = { grp -> hiddenGroups = if (hiddenGroups.contains(grp)) hiddenGroups - grp else hiddenGroups + grp; saveHiddenGroups(prefs, hiddenGroups) },
                                 onShowAll = { hiddenGroups = emptySet(); saveHiddenGroups(prefs, hiddenGroups) },
                                 onDismiss = { showHiddenGroupsDialog = false }
                             )
                         }
 
                         if (showSleepDialog) {
-                            SleepTimerDialog(S, themePalette, (sleepSecondsLeft + 59) / 60, onSelectMinutes = { mins -> sleepSecondsLeft = mins * 60 }, onDismiss = { showSleepDialog = false })
+                            SleepTimerDialog(S, themePalette, (sleepSecondsLeft + 59) / 60, onSelectMinutes = { sleepSecondsLeft = it * 60 }, onDismiss = { showSleepDialog = false })
                         }
 
                         if (selectedVodForDetails != null) {
                             val m = selectedVodForDetails!!
                             val saved = vodHistory.find { it.key == m.id || it.streamUrl == m.streamUrl }
                             VodDetailsDialog(
-                                S = S, theme = themePalette, movie = m, savedProgress = saved,
+                                S, themePalette, m, saved,
                                 onPlayFromStart = { selectedVodForDetails = null; startVodPlayback(m.id, m.title, m.posterUrl, m.streamUrl, 0L) },
                                 onResume = { pos -> selectedVodForDetails = null; startVodPlayback(m.id, m.title, m.posterUrl, m.streamUrl, pos) },
                                 onDismiss = { selectedVodForDetails = null }
@@ -495,9 +498,9 @@ class MainActivity : ComponentActivity() {
                             val ch = epgDialogChannel!!
                             val schedule = remember(ch, epgScheduleMap) { findChannelSchedule(ch, epgScheduleMap) }
                             EpgAndArchiveDialog(
-                                S = S, theme = themePalette, channel = ch, schedule = schedule, reminders = reminders,
+                                S, themePalette, ch, schedule, reminders,
                                 onDismiss = { epgDialogChannel = null },
-                                onToggleReminder = { prog -> toggleReminderFor(ch, prog) },
+                                onToggleReminder = { toggleReminderFor(ch, it) },
                                 onPlayArchive = { prog ->
                                     currentChannel = ch; currentVodPlay = null; activeArchiveProgram = prog; archiveSeekOffsetSec = 0L; epgDialogChannel = null
                                     if (playerEngine == 2) launchExternalVideoPlayer(this@MainActivity, buildArchiveStreamUrl(ch, prog.startMs, prog.stopMs), "${ch.name}: ${prog.title}")
@@ -542,15 +545,31 @@ class MainActivity : ComponentActivity() {
                                 if (isFullscreen && !showTiviMateOverlay) runCatching { fsFocusRequester.requestFocus() }
                             }
 
+                            if (showPlayerQuickMenu) {
+                                PlayerQuickMenuDialog(
+                                    S = S, theme = themePalette, isVod = isVod, isArchive = isArchive, playerEngine = playerEngine,
+                                    resizeLabel = resizeLabels[playerResizeMode], playbackSpeed = playbackSpeed,
+                                    sleepMinutesLeft = (sleepSecondsLeft + 59) / 60, isSmartphone = isSmartphone,
+                                    onCycleResize = { playerResizeMode = (playerResizeMode + 1) % 3; prefs.edit().putInt("player_resize", playerResizeMode).apply() },
+                                    onOpenAudio = { showPlayerQuickMenu = false; showAudioTracksDialog = true },
+                                    onCycleSpeed = { playbackSpeed = when (playbackSpeed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 1f } },
+                                    onSeekBack10 = { if (isVod) { seekCounter++; seekCommand = seekCounter to -10000L } else archiveSeekOffsetSec = (archiveSeekOffsetSec - 10L).coerceAtLeast(0L) },
+                                    onSeekFwd10 = { if (isVod) { seekCounter++; seekCommand = seekCounter to 10000L } else archiveSeekOffsetSec += 10L },
+                                    onOpenSleep = { showPlayerQuickMenu = false; showSleepDialog = true },
+                                    onOpenChannels = { showPlayerQuickMenu = false; showQuickChannelPicker = true },
+                                    onOpenTvGuide = { showPlayerQuickMenu = false; showTiviMateOverlay = true },
+                                    onOpenMultiView = { showPlayerQuickMenu = false; isMultiViewMode = true },
+                                    onDismiss = { showPlayerQuickMenu = false }
+                                )
+                            }
+
                             Box(
                                 modifier = Modifier.fillMaxSize().background(Color.Black)
                                     .focusRequester(fsFocusRequester).focusable()
                                     .onPreviewKeyEvent { ev ->
                                         if (ev.type == KeyEventType.KeyDown && !showTiviMateOverlay && !isVod) {
                                             val code = ev.nativeKeyEvent.keyCode
-                                            if (code in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) {
-                                                digitBuffer += (code - KeyEvent.KEYCODE_0).toString(); return@onPreviewKeyEvent true
-                                            }
+                                            if (code in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) { digitBuffer += (code - KeyEvent.KEYCODE_0).toString(); return@onPreviewKeyEvent true }
                                             if (code == KeyEvent.KEYCODE_CHANNEL_UP) { zapChannelStep(1); return@onPreviewKeyEvent true }
                                             if (code == KeyEvent.KEYCODE_CHANNEL_DOWN) { zapChannelStep(-1); return@onPreviewKeyEvent true }
                                         }
@@ -561,34 +580,24 @@ class MainActivity : ComponentActivity() {
                                             when (ev.nativeKeyEvent.keyCode) {
                                                 KeyEvent.KEYCODE_DPAD_UP -> { zapChannelStep(1); return@onKeyEvent true }
                                                 KeyEvent.KEYCODE_DPAD_DOWN -> { zapChannelStep(-1); return@onKeyEvent true }
-                                                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                                                    showTiviMateOverlay = true; return@onKeyEvent true
-                                                }
+                                                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { showTiviMateOverlay = true; return@onKeyEvent true }
                                             }
                                         }
                                         false
                                     }
                             ) {
                                 SmartVideoPlayer(
-                                    streamUrl = playUrl,
-                                    userAgent = currentChannel?.userAgent ?: playerDefaultUa,
-                                    resizeMode = playerResizeMode,
-                                    bufferMode = playerBufferMode,
-                                    useNativeController = isVod || playerEngine == 1,
-                                    reconnectingText = S.reconnecting,
-                                    playerEngine = playerEngine,
-                                    enableSwipeGestures = controlMode == "touch",
+                                    streamUrl = playUrl, userAgent = currentChannel?.userAgent ?: playerDefaultUa,
+                                    resizeMode = playerResizeMode, bufferMode = playerBufferMode,
+                                    useNativeController = isVod || playerEngine == 1, reconnectingText = S.reconnecting,
+                                    playerEngine = playerEngine, enableSwipeGestures = controlMode == "touch",
                                     playbackSpeed = if (isVod || isArchive) playbackSpeed else 1f,
-                                    initialSeekMs = if (isVod) vodInitialSeekMs else 0L,
-                                    seekCommand = seekCommand,
-                                    showAudioSelectorDialog = showAudioTracksDialog,
-                                    onDismissAudioSelector = { showAudioTracksDialog = false },
+                                    initialSeekMs = if (isVod) vodInitialSeekMs else 0L, seekCommand = seekCommand,
+                                    showAudioSelectorDialog = showAudioTracksDialog, onDismissAudioSelector = { showAudioTracksDialog = false },
                                     onVideoQualityDetected = { videoQualityLabel = it },
                                     onPlaybackProgress = { pos, dur ->
                                         val vp = currentVodPlay
-                                        if (isVod && vp != null) {
-                                            vodHistory = saveVodProgressItem(prefs, vp.copy(positionMs = pos, durationMs = dur, updatedAt = System.currentTimeMillis()))
-                                        }
+                                        if (isVod && vp != null) vodHistory = saveVodProgressItem(prefs, vp.copy(positionMs = pos, durationMs = dur, updatedAt = System.currentTimeMillis()))
                                     },
                                     modifier = Modifier.fillMaxSize()
                                 )
@@ -601,104 +610,92 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
 
+                                // ЧИСТАЯ ВЕРХНЯЯ ПАНЕЛЬ (никогда не съезжает за экран!)
                                 Row(
-                                    modifier = Modifier.align(Alignment.TopStart)
+                                    modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
                                         .padding(top = if (clockPosition != 0) 40.dp else 10.dp, start = 10.dp, end = 10.dp)
-                                        .background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
+                                        .clip(RoundedCornerShape(14.dp)).background(Color(0xBB000000)).padding(horizontal = 12.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Text(playTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 130.dp))
-
-                                    if (videoQualityLabel.isNotBlank()) {
-                                        Text(videoQualityLabel, color = themePalette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.background(Color(0x66000000), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
-                                    }
-
-                                    if (playerEngine == 0) {
-                                        OutlinedButton(onClick = { playerResizeMode = (playerResizeMode + 1) % 3; prefs.edit().putInt("player_resize", playerResizeMode).apply() }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) {
-                                            Text("📐 ${resizeLabels[playerResizeMode]}", color = Color.White, fontSize = 11.sp)
-                                        }
-                                        OutlinedButton(onClick = { showAudioTracksDialog = true }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) {
-                                            Text("🔊", color = Color.White, fontSize = 12.sp)
-                                        }
-                                    }
-
-                                    if ((isVod || isArchive) && playerEngine == 0) {
-                                        OutlinedButton(onClick = {
-                                            playbackSpeed = when (playbackSpeed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 1f }
-                                        }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) {
-                                            Text("${playbackSpeed}x", color = Color(0xFF38BDF8), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                        if (isVod) {
-                                            OutlinedButton(onClick = { seekCounter++; seekCommand = seekCounter to -10000L }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)) { Text("-10с", color = Color.White, fontSize = 11.sp) }
-                                            OutlinedButton(onClick = { seekCounter++; seekCommand = seekCounter to 10000L }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)) { Text("+10с", color = Color.White, fontSize = 11.sp) }
-                                        }
-                                    }
-
-                                    OutlinedButton(onClick = { showSleepDialog = true }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) {
-                                        Text(if (sleepSecondsLeft > 0) "⏱${(sleepSecondsLeft + 59) / 60}м" else "⏱", color = if (sleepSecondsLeft > 0) Color(0xFFF59E0B) else Color.White, fontSize = 11.sp)
-                                    }
-
-                                    if (!isVod && currentChannel != null) {
-                                        OutlinedButton(onClick = { showTiviMateOverlay = !showTiviMateOverlay }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) {
-                                            Text("🗂 Гид", color = Color(0xFF10B981), fontSize = 11.sp)
-                                        }
-                                        if (playerEngine == 0) {
-                                            OutlinedButton(onClick = { isMultiViewMode = true }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) {
-                                                Text("⊞ 4x", color = Color(0xFFF59E0B), fontSize = 11.sp)
-                                            }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(playTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        if (videoQualityLabel.isNotBlank()) {
+                                            Text(videoQualityLabel, color = themePalette.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                         }
                                     }
                                     if (isSmartphone) {
-                                        if (!isVod && currentChannel != null) {
-                                            OutlinedButton(onClick = { showQuickChannelPicker = true }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) {
-                                                Text("📋", color = Color(0xFF38BDF8), fontSize = 12.sp)
-                                            }
-                                        }
-                                        OutlinedButton(onClick = { triggerPipMode() }, contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp)) {
-                                            Text("PiP", color = Color.White, fontSize = 11.sp)
+                                        IconButton(onClick = { triggerPipMode() }, modifier = Modifier.size(36.dp)) {
+                                            Icon(Icons.Default.PictureInPictureAlt, null, tint = Color.White)
                                         }
                                     }
-                                    Button(onClick = { isFullscreen = false }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)) {
-                                        Text(if (isRu) "Свернуть" else "Exit", fontSize = 11.sp)
+                                    IconButton(onClick = { showPlayerQuickMenu = true }, modifier = Modifier.size(36.dp)) {
+                                        Icon(Icons.Default.Tune, null, tint = themePalette.primary)
+                                    }
+                                    IconButton(onClick = { isFullscreen = false }, modifier = Modifier.size(36.dp)) {
+                                        Icon(Icons.Default.FullscreenExit, null, tint = Color.White)
                                     }
                                 }
 
-                                if (!isVod && currentChannel != null && !showTiviMateOverlay && playerEngine == 0) {
-                                    Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(14.dp).background(Color(0xCC121417), RoundedCornerShape(14.dp)).padding(horizontal = 16.dp, vertical = 10.dp)) {
-                                        if (isArchive && activeArchiveProgram != null) {
-                                            val prog = activeArchiveProgram!!
-                                            val totalSec = ((prog.stopMs - prog.startMs) / 1000L).coerceAtLeast(60L)
-                                            var sliderPos by remember(archiveSeekOffsetSec) { mutableStateOf(archiveSeekOffsetSec.toFloat()) }
-                                            Column {
+                                // ЭРГОНОМИЧНАЯ НИЖНЯЯ ПАНЕЛЬ ПОД БОЛЬШОЙ ПАЛЕЦ (для прямого эфира и архива)
+                                if (!isVod && currentChannel != null && !showTiviMateOverlay) {
+                                    Column(
+                                        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(12.dp)
+                                            .clip(RoundedCornerShape(16.dp)).background(Color(0xCC121417)).padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        if (playerEngine == 0) {
+                                            if (isArchive && activeArchiveProgram != null) {
+                                                val prog = activeArchiveProgram!!
+                                                val totalSec = ((prog.stopMs - prog.startMs) / 1000L).coerceAtLeast(60L)
+                                                var sliderPos by remember(archiveSeekOffsetSec) { mutableStateOf(archiveSeekOffsetSec.toFloat()) }
                                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                                     Text("⏪ ${prog.title}", color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
-                                                    Text("-10с", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 6.dp).clickable { archiveSeekOffsetSec = (archiveSeekOffsetSec - 10L).coerceAtLeast(0L) })
-                                                    Text("+10с", color = Color.White, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 6.dp).clickable { archiveSeekOffsetSec = (archiveSeekOffsetSec + 10L).coerceAtMost(totalSec - 10L) })
-                                                    TextButton(onClick = { activeArchiveProgram = null; archiveSeekOffsetSec = 0L; playbackSpeed = 1f }) {
+                                                    TextButton(onClick = { activeArchiveProgram = null; archiveSeekOffsetSec = 0L; playbackSpeed = 1f }, contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
                                                         Text("🔴 Эфир", color = Color(0xFFEF4444), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                                     }
                                                 }
-                                                Slider(value = sliderPos.coerceIn(0f, totalSec.toFloat()), onValueChange = { sliderPos = it }, onValueChangeFinished = { archiveSeekOffsetSec = sliderPos.toLong() }, valueRange = 0f..totalSec.toFloat(), modifier = Modifier.fillMaxWidth().height(28.dp))
-                                            }
-                                        } else if (nowProg != null) {
-                                            val totalMs = (nowProg.stopMs - nowProg.startMs).coerceAtLeast(1L)
-                                            val elapsedMs = (currentTimeMs - nowProg.startMs).coerceIn(0L, totalMs)
-                                            val progress = (elapsedMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
-                                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                Slider(value = sliderPos.coerceIn(0f, totalSec.toFloat()), onValueChange = { sliderPos = it }, onValueChangeFinished = { archiveSeekOffsetSec = sliderPos.toLong() }, valueRange = 0f..totalSec.toFloat(), modifier = Modifier.fillMaxWidth().height(26.dp))
+                                            } else if (nowProg != null) {
+                                                val totalMs = (nowProg.stopMs - nowProg.startMs).coerceAtLeast(1L)
+                                                val elapsedMs = (currentTimeMs - nowProg.startMs).coerceIn(0L, totalMs)
                                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                    Text("🟢 ${nowProg.title}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
+                                                    Text("🟢 ${nowProg.title}", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, modifier = Modifier.weight(1f))
                                                     if (currentChannel!!.catchupDays > 0) {
-                                                        TextButton(onClick = { activeArchiveProgram = nowProg; archiveSeekOffsetSec = 0L }) {
-                                                            Text("⏪ С начала", color = Color(0xFFF59E0B), fontSize = 12.sp)
-                                                        }
+                                                        Text("⏪ С начала", color = Color(0xFFF59E0B), fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { activeArchiveProgram = nowProg; archiveSeekOffsetSec = 0L })
                                                     }
                                                 }
-                                                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)), color = themePalette.primary)
+                                                LinearProgressIndicator(progress = { (elapsedMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)), color = themePalette.primary)
                                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                                    Text("Прошло: ${elapsedMs / 60000L} мин (${nowProg.timeRangeText})", color = Color.LightGray, fontSize = 11.sp)
-                                                    Text("Осталось: ${(totalMs - elapsedMs) / 60000L} мин", color = Color.LightGray, fontSize = 11.sp)
+                                                    Text("${elapsedMs / 60000L} мин (${nowProg.timeRangeText})", color = Color.LightGray, fontSize = 11.sp)
+                                                    Text("Ост: ${(totalMs - elapsedMs) / 60000L} мин", color = Color.LightGray, fontSize = 11.sp)
                                                 }
+                                            }
+                                        }
+
+                                        // Прокручиваемая лента быстрых кнопок внизу под палец
+                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            if (isSmartphone) {
+                                                item { PlayerActionPill(if (S.isRu) "📋 Каналы" else "📋 Channels", Color(0xFF38BDF8)) { showQuickChannelPicker = true } }
+                                            }
+                                            item { PlayerActionPill(if (S.isRu) "🗂 ТВ-Гид" else "🗂 Guide", Color(0xFF10B981)) { showTiviMateOverlay = true } }
+                                            if (playerEngine == 0) {
+                                                item {
+                                                    PlayerActionPill("📐 ${resizeLabels[playerResizeMode]}") {
+                                                        playerResizeMode = (playerResizeMode + 1) % 3; prefs.edit().putInt("player_resize", playerResizeMode).apply()
+                                                    }
+                                                }
+                                                item { PlayerActionPill(if (S.isRu) "🔊 Звук" else "🔊 Audio") { showAudioTracksDialog = true } }
+                                                if (isArchive) {
+                                                    item { PlayerActionPill("${playbackSpeed}x", Color(0xFF38BDF8)) { playbackSpeed = when (playbackSpeed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 1f } } }
+                                                    item { PlayerActionPill("-10с") { archiveSeekOffsetSec = (archiveSeekOffsetSec - 10L).coerceAtLeast(0L) } }
+                                                    item { PlayerActionPill("+10с") { archiveSeekOffsetSec += 10L } }
+                                                }
+                                                item { PlayerActionPill(if (S.isRu) "⊞ 4 Экран" else "⊞ Multi", Color(0xFFF59E0B)) { isMultiViewMode = true } }
+                                            }
+                                            item {
+                                                val sLabel = if (sleepSecondsLeft > 0) "⏱ ${(sleepSecondsLeft + 59) / 60}м" else (if (S.isRu) "⏱ Сон" else "⏱ Sleep")
+                                                PlayerActionPill(sLabel, if (sleepSecondsLeft > 0) Color(0xFFF59E0B) else Color.White) { showSleepDialog = true }
                                             }
                                         }
                                     }
@@ -819,6 +816,45 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
+fun PlayerQuickMenuDialog(
+    S: Strings, theme: AppThemePalette, isVod: Boolean, isArchive: Boolean, playerEngine: Int,
+    resizeLabel: String, playbackSpeed: Float, sleepMinutesLeft: Int, isSmartphone: Boolean,
+    onCycleResize: () -> Unit, onOpenAudio: () -> Unit, onCycleSpeed: () -> Unit,
+    onSeekBack10: () -> Unit, onSeekFwd10: () -> Unit, onOpenSleep: () -> Unit,
+    onOpenChannels: () -> Unit, onOpenTvGuide: () -> Unit, onOpenMultiView: () -> Unit, onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp)) {
+            Column(modifier = Modifier.padding(18.dp).widthIn(min = 260.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (S.isRu) "⚙️ Опции плеера" else "⚙️ Player Options", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.primary)
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Close, null, tint = theme.text) }
+                }
+                if (playerEngine == 0) {
+                    OutlinedButton(onClick = onCycleResize, modifier = Modifier.fillMaxWidth()) { Text("📐 Формат: $resizeLabel", color = theme.text) }
+                    OutlinedButton(onClick = onOpenAudio, modifier = Modifier.fillMaxWidth()) { Text("🔊 Звуковая дорожка", color = theme.text) }
+                    if (isVod || isArchive) {
+                        OutlinedButton(onClick = onCycleSpeed, modifier = Modifier.fillMaxWidth()) { Text("⚡ Скорость: ${playbackSpeed}x", color = theme.text) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(onClick = onSeekBack10, modifier = Modifier.weight(1f)) { Text("⏪ -10 сек", color = theme.text) }
+                            OutlinedButton(onClick = onSeekFwd10, modifier = Modifier.weight(1f)) { Text("⏩ +10 сек", color = theme.text) }
+                        }
+                    }
+                }
+                OutlinedButton(onClick = onOpenSleep, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (sleepMinutesLeft > 0) "⏱ Таймер сна: $sleepMinutesLeft мин" else "⏱ Таймер сна: Выкл", color = theme.text)
+                }
+                if (!isVod) {
+                    if (isSmartphone) OutlinedButton(onClick = onOpenChannels, modifier = Modifier.fillMaxWidth()) { Text("📋 Список каналов", color = theme.text) }
+                    OutlinedButton(onClick = onOpenTvGuide, modifier = Modifier.fillMaxWidth()) { Text("🗂 Прозрачный ТВ-Гид", color = theme.text) }
+                    if (playerEngine == 0) OutlinedButton(onClick = onOpenMultiView, modifier = Modifier.fillMaxWidth()) { Text("⊞ Мультиэкран (4 канала)", color = theme.text) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun QuickChannelPickerDialog(S: Strings, theme: AppThemePalette, channels: List<Channel>, currentChannel: Channel?, onDismiss: () -> Unit, onSelect: (Channel) -> Unit) {
     var q by remember { mutableStateOf("") }
     val filtered = remember(channels, q) { if (q.isBlank()) channels else channels.filter { it.name.contains(q, ignoreCase = true) } }
@@ -880,11 +916,7 @@ fun EpgAndArchiveDialog(
                             val canPlayThisPast = isPast && channelHasArchive
                             val hasRem = isFuture && reminders.any { it.channelId == channel.id && it.startMs == prog.startMs }
                             val badgeText = when {
-                                isNow -> "🟢 В ЭФИРЕ"
-                                canPlayThisPast -> "⏪ АРХИВ"
-                                hasRem -> "🔔 НАПОМНЮ"
-                                isFuture -> "🔔 НАПОМНИТЬ"
-                                else -> "ЗАВЕРШЕНО"
+                                isNow -> "🟢 В ЭФИРЕ"; canPlayThisPast -> "⏪ АРХИВ"; hasRem -> "🔔 НАПОМНЮ"; isFuture -> "🔔 НАПОМНИТЬ"; else -> "ЗАВЕРШЕНО"
                             }
                             val badgeColor = when {
                                 isNow -> Color(0xFF10B981); canPlayThisPast -> Color(0xFFF59E0B); hasRem -> Color(0xFF38BDF8); else -> theme.subtext
@@ -900,8 +932,7 @@ fun EpgAndArchiveDialog(
                                     Text(prog.timeRangeText, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.subtext)
                                     Text(badgeText, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = badgeColor)
                                 }
-                                Spacer(Modifier.height(4.dp))
-                                Text(prog.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
+                                Spacer(Modifier.height(4.dp)); Text(prog.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
                             }
                         }
                     }
