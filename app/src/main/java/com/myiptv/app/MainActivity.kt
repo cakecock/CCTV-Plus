@@ -65,6 +65,11 @@ import java.util.Locale
 
 private const val FAV_GROUP_TAG = "__FAV_CATEGORY__"
 
+fun getAppVersionInfo(context: Context): Pair<String, Long> = runCatching {
+    val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+    (pInfo.versionName ?: "1.0") to pInfo.longVersionCode
+}.getOrDefault("1.0" to 1L)
+
 class MainActivity : ComponentActivity() {
     private var webServer: SimpleQrWebServer? = null
 
@@ -806,6 +811,8 @@ fun AccordionSettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val (installedVerName, installedVerCode) = remember { getAppVersionInfo(context) }
+
     var expandedRow by remember { mutableStateOf(0) }
     fun toggleRow(idx: Int) { expandedRow = if (expandedRow == idx) -1 else idx }
 
@@ -820,7 +827,6 @@ fun AccordionSettingsScreen(
     var isUpdating by remember { mutableStateOf(false) }
     var backupStatus by remember { mutableStateOf("") }
 
-    // Диалоги сохранения и открытия файла резервной копии настроек (.json)
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
             runCatching {
@@ -1013,7 +1019,7 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 5. ИМПОРТ И ЭКСПОРТ НАСТРОЕК (РЕЗЕРВНАЯ КОПИЯ)
+        // 5. ИМПОРТ И ЭКСПОРТ НАСТРОЕК
         ExpandableSectionRow(S.catBackup, expandedRow == 5, theme, { toggleRow(5) }) {
             Button(onClick = { exportLauncher.launch("CCTV-Plus-Backup.json") }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.UploadFile, null)
@@ -1068,8 +1074,14 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 7. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ (С ПОЛОСКОЙ И ПРОЦЕНТАМИ ЗАГРУЗКИ)
+        // 7. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ
         ExpandableSectionRow(if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)", expandedRow == 7, theme, { toggleRow(7) }) {
+            Text(
+                text = if (S.isRu) "Установленная версия: v$installedVerName (Сборка #$installedVerCode)" else "Installed version: v$installedVerName (Build #$installedVerCode)",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = theme.subtext
+            )
             Button(
                 onClick = {
                     scope.launch {
@@ -1080,7 +1092,7 @@ fun AccordionSettingsScreen(
                         isUpdating = false
                         res.onSuccess { info ->
                             latestRelease = info
-                            updateStatus = if (S.isRu) "✅ Доступна сборка: ${info.versionTag}" else "✅ Available: ${info.versionTag}"
+                            updateStatus = if (S.isRu) "✅ На GitHub доступна сборка: ${info.versionTag}" else "✅ Available on GitHub: ${info.versionTag}"
                         }.onFailure { err ->
                             updateStatus = "❌ ${err.localizedMessage}"
                         }
@@ -1142,6 +1154,32 @@ fun AccordionSettingsScreen(
                     Text(if (S.isRu) "⬇️ Скачать и установить ${latestRelease!!.versionTag}" else "⬇️ Download & Install ${latestRelease!!.versionTag}", fontWeight = FontWeight.Bold)
                 }
             }
+        }
+
+        // ПОДВАЛ НАСТРОЕК: ПОДПИСЬ РАЗРАБОТЧИКА И АВТОМАТИЧЕСКИЙ НОМЕР ВЕРСИИ
+        Spacer(Modifier.height(6.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(theme.card)
+                .border(1.dp, theme.primary.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+                .padding(vertical = 16.dp, horizontal = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "📺 CCTV Plus • v$installedVerName (Build #$installedVerCode)",
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 15.sp,
+                color = theme.primary
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = if (S.isRu) "👨‍💻 Разработчик: cakecock © 2026" else "👨‍💻 Developer: cakecock © 2026",
+                fontWeight = FontWeight.Medium,
+                fontSize = 13.sp,
+                color = theme.subtext
+            )
         }
     }
 }
