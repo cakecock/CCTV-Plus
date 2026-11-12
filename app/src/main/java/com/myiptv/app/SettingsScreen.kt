@@ -80,12 +80,22 @@ fun SourceDropdownSelector(
 }
 
 @Composable
-fun ExpandableSectionRow(
-    title: String,
-    isExpanded: Boolean,
+fun SourceDropdownSelector(
+    label: String,
+    selectedTitle: String,
+    options: List<Pair<String, String>>,
     theme: AppThemePalette,
-    onToggle: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit
+    onSelect: (String) -> Unit
+) = SourceDropdownSelector(label, selectedTitle, options, theme, onSelect, Modifier)
+
+@Composable
+fun SourceDropdownSelector(
+    label: String,
+    selectedTitle: String,
+    options: List<Pair<String, String>>,
+    theme: AppThemePalette,
+    onSelect: (String) -> Unit,
+    modifier: Modifier
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = theme.card),
