@@ -47,7 +47,19 @@ data class ChangelogRelease(
 
 val AppChangelogHistory = listOf(
     ChangelogRelease(
-        version = "v1.22 (Текущая)",
+        version = "v1.23 (Текущая)",
+        date = "12.11.2026",
+        changesRu = listOf(
+            "🏷 В нижней части Настроек добавлена карточка с подписью разработчика (cakecock) и автоматическим номером текущей версии и сборки.",
+            "🔄 В меню обновления теперь отображается текущая установленная версия приложения для удобного сравнения."
+        ),
+        changesEn = listOf(
+            "🏷 Added developer signature (cakecock) and automatic version/build badge at the bottom of Settings.",
+            "🔄 Added current installed version display in the Update menu."
+        )
+    ),
+    ChangelogRelease(
+        version = "v1.22",
         date = "12.11.2026",
         changesRu = listOf(
             "📊 Добавлена полоска состояния и точный процент скачивания обновлений (0% - 100% + МБ).",
