@@ -59,42 +59,40 @@ val AppChangelogHistory = listOf(
         version = "CURRENT",
         date = "12.11.2026",
         changesRu = listOf(
-            "📡 Пункты «Плейлисты», «Телепрограмма», «Порталы» и «QR-Пульт» объединены в один удобный раздел «Источники и Контент» с выпадающим списком, а все меню Настроек отсортировано.",
-            "📱 При первом запуске (и в настройках плеера) добавлен выбор типа устройства (Смартфон / Телевизор) и управления (Сенсор / Пульт ДУ).",
-            "🎬 В полноэкранный плеер для смартфонов добавлены быстрые кнопки «Список каналов» и «Гид / Архив» (на ТВ они автоматически скрыты).",
-            "📅 Значки программы передач и архива теперь отображаются строго на тех каналах, где они реально доступны.",
-            "🎨 Полностью обновлены 8 цветовых тем (3 тёмные и 5 светлых) для гармоничного сочетания фонов, карточек и текста."
+            "📺 Справа от мини-плеера кнопка «Программа / Архив» заменена на информативную кликабельную плашку с текущей передачей, временем эфира и полоской прогресса, а список каналов очищен от лишних значков.",
+            "📊 Исправлено дергание временной полоски в прямом эфире: теперь в эфире отображается плавная шкала времени от начала текущей передачи, а в режиме Архива работает ползунок перемотки по всей записи.",
+            "🕒 Добавлена настройка отображения компактных часов реального времени (Выкл / В левом верхнем углу / В правом верхнем углу).",
+            "📅 Добавлена автоматическая резервная подгрузка телепрограммы (EPG), если в самом M3U-плейлисте не прописан тег url-tvg."
         ),
         changesEn = listOf(
-            "📡 Grouped Playlists, EPG, Portals, and QR Remote into a unified 'Sources & Content' dropdown menu and sorted all Settings sections.",
-            "📱 Added Device Type (Smartphone / TV) and Control Mode (Touch / Remote) selection on first launch and in Player Settings.",
-            "🎬 Added quick 'Channel List' and 'EPG / Archive' buttons in fullscreen player for Smartphones (automatically hidden on TV).",
-            "📅 EPG and Archive icons now appear strictly on channels that have guide/catch-up data.",
-            "🎨 Redesigned 8 color themes (3 Dark & 5 Light) for balanced contrast and eye comfort."
+            "📺 Replaced the 'EPG / Archive' button next to the mini-player with an interactive live program info card & progress bar, and cleaned up channel list rows.",
+            "📊 Fixed live stream timeline jitter: Live TV now shows smooth elapsed/remaining broadcast progress, while Archive mode provides a full seek/rewind slider.",
+            "🕒 Added real-time overlay clock setting (Off / Top-Left / Top-Right).",
+            "📅 Added automatic fallback EPG loading when playlist lacks an embedded url-tvg tag."
+        )
+    ),
+    ChangelogRelease(
+        version = "v1.26",
+        date = "12.11.2026",
+        changesRu = listOf(
+            "📡 Пункты «Плейлисты», «Телепрограмма», «Порталы» и «QR-Пульт» объединены в раздел «Источники и Контент» с выпадающим списком.",
+            "📱 Выбор устройства (Смартфон / Телевизор) и управления (Сенсор / Пульт ДУ) + обновленные 10 тем оформления."
+        ),
+        changesEn = listOf(
+            "📡 Grouped Playlists, EPG, Portals, and QR Remote into a unified 'Sources & Content' dropdown menu.",
+            "📱 Device Type & Control Mode selection + 10 refined color themes."
         )
     ),
     ChangelogRelease(
         version = "v1.25",
         date = "12.11.2026",
         changesRu = listOf(
-            "⚖️ Добавлены разделы «Лицензия», «Конфиденциальность» и «Сообщить о проблеме» с безопасным генератором отчетов.",
-            "📅 Добавлено интерактивное окно «Телепрограмма и Архив (Catch-Up)» и настройки буфера/пропорций видеоплеера."
+            "⚖️ Добавлены разделы «Лицензия», «Конфиденциальность» и «Сообщить о проблеме».",
+            "📅 Интерактивное окно «Телепрограмма и Архив (Catch-Up)» и настройки видеоплеера."
         ),
         changesEn = listOf(
             "⚖️ Added License, Privacy Policy, and Report an Issue sections.",
-            "📅 Added interactive TV Guide & Catch-Up Archive window and player buffer/aspect ratio settings."
-        )
-    ),
-    ChangelogRelease(
-        version = "v1.24",
-        date = "12.11.2026",
-        changesRu = listOf(
-            "🖼 Новая фирменная векторная иконка приложения CCTV Plus.",
-            "🏷 Карточка разработчика (cakecock) с авто-синхронизацией номера версии и меню Импорта/Экспорта настроек."
-        ),
-        changesEn = listOf(
-            "🖼 New custom vector app icon for CCTV Plus.",
-            "🏷 Developer signature badge (cakecock) and Backup Import/Export."
+            "📅 Interactive TV Guide & Catch-Up Archive window and player settings."
         )
     )
 )
@@ -102,33 +100,33 @@ val AppChangelogHistory = listOf(
 val LicenseItemsRu = listOf(
     "1. Назначение программы: Приложение «CCTV Plus» является исключительно программным медиаплеером (оболочкой для воспроизведения потокового видео) и предоставляется по принципу «как есть» (AS IS).",
     "2. Отсутствие встроенного контента: Разработчик (cakecock) НЕ предоставляет, НЕ хранит, НЕ ретранслирует и НЕ продает телеканалы, фильмы, сериалы или плейлисты. Приложение не содержит встроенных медиа-источников.",
-    "3. Ответственность пользователя: Все ссылки на плейлисты (M3U/M3U8), порталы (VPortal, Stalker) и телепрограмму (EPG) добавляются пользователем самостоятельно. Пользователь несет полную ответственность за наличие прав на просмотр используемых им источников.",
-    "4. Компоненты с открытым кодом: В составе приложения используются библиотеки AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil и ZXing, распространяемые под лицензией Apache License 2.0.",
-    "5. Авторские права: © 2026 cakecock. Все права на исходный код и дизайн оболочки CCTV Plus защищены."
+    "3. Ответственность пользователя: Все ссылки на плейлисты (M3U/M3U8), порталы (VPortal, Stalker) и телепрограмму (EPG) добавляются пользователем самостоятельно.",
+    "4. Компоненты с открытым кодом: В составе приложения используются библиотеки AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil и ZXing (Apache License 2.0).",
+    "5. Авторские права: © 2026 cakecock. Все права защищены."
 )
 
 val LicenseItemsEn = listOf(
-    "1. Software Purpose: 'CCTV Plus' is strictly a media player application (a software shell for streaming playback) provided 'AS IS'.",
-    "2. No Built-in Content: The developer (cakecock) does NOT provide, host, stream, or distribute any TV channels, movies, series, or playlists. The application contains zero built-in media sources.",
-    "3. User Responsibility: All playlist URLs (M3U/M3U8), portal credentials (VPortal, Stalker), and EPG links are configured solely by the user.",
-    "4. Open Source Licenses: This app uses AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil, and ZXing under the Apache License 2.0.",
+    "1. Software Purpose: 'CCTV Plus' is strictly a media player application provided 'AS IS'.",
+    "2. No Built-in Content: The developer (cakecock) does NOT provide, host, stream, or distribute any TV channels, movies, series, or playlists.",
+    "3. User Responsibility: All playlist URLs, portal credentials, and EPG links are configured solely by the user.",
+    "4. Open Source Licenses: Uses AndroidX Jetpack Compose, Media3 (ExoPlayer), OkHttp, Coil, and ZXing under Apache License 2.0.",
     "5. Copyright: © 2026 cakecock. All rights reserved."
 )
 
 val PrivacyItemsRu = listOf(
-    "1. 100% локальное хранение данных: Все ваши настройки, ссылки на плейлисты, ключи доступа VPortal, MAC-адреса и список избранных каналов хранятся исключительно во внутренней защищенной памяти вашего устройства.",
-    "2. Отсутствие слежки и рекламы: Приложение CCTV Plus НЕ собирает персональные данные, НЕ отслеживает историю ваших просмотров, НЕ содержит рекламных SDK и НЕ передает ваши личные ключи на сторонние серверы.",
-    "3. Прямые сетевые соединения: Доступ к интернету используется только для прямого обращения вашего устройства к указанным вами серверам IPTV/EPG, а также к официальному репозиторию GitHub (github.com/cakecock) при проверке обновлений.",
-    "4. Безопасность QR-Пульта: Встроенный веб-сервер быстрой настройки работает исключительно внутри вашей домашней сети Wi-Fi и недоступен из внешней сети Интернет.",
-    "5. Защита при отправке отчетов: При копировании технического отчета в разделе «Сообщить о проблеме» ваши личные ключи подписки автоматически маскируются звездочками (***)."
+    "1. 100% локальное хранение данных: Все ваши настройки, ссылки на плейлисты, ключи доступа VPortal, MAC-адреса и список избранных каналов хранятся исключительно во внутренней памяти вашего устройства.",
+    "2. Отсутствие слежки и рекламы: Приложение CCTV Plus НЕ собирает персональные данные, НЕ отслеживает историю просмотров и НЕ передает ваши ключи на сторонние серверы.",
+    "3. Прямые сетевые соединения: Доступ к интернету используется только для прямого обращения к указанным вами серверам IPTV/EPG и к GitHub (github.com/cakecock) при проверке обновлений.",
+    "4. Безопасность QR-Пульта: Встроенный веб-сервер быстрой настройки работает исключительно внутри вашей домашней сети Wi-Fi.",
+    "5. Защита при отправке отчетов: При копировании тех. отчета ваши ключи подписки автоматически скрываются звездочками (***)."
 )
 
 val PrivacyItemsEn = listOf(
-    "1. 100% Local Storage: All your settings, playlist links, VPortal keys, MAC addresses, and favorite channels are stored exclusively in your device's internal storage.",
-    "2. Zero Tracking & Zero Ads: CCTV Plus does NOT collect personal data, does NOT track your viewing history, contains NO advertising SDKs, and NEVER sends your private keys to third-party servers.",
-    "3. Direct Network Connections: Internet access is used solely to connect directly from your device to your configured IPTV/EPG servers and to GitHub (github.com/cakecock) when checking for app updates.",
-    "4. QR Remote Security: The built-in QR setup server runs strictly within your local home Wi-Fi network and is inaccessible from the public internet.",
-    "5. Safe Bug Reports: When generating a diagnostic report in 'Report an Issue', your private subscription keys are automatically masked with asterisks (***)."
+    "1. 100% Local Storage: All settings, playlists, VPortal keys, and favorites are stored exclusively on your device.",
+    "2. Zero Tracking & Zero Ads: CCTV Plus collects NO personal data and contains NO advertising or analytics SDKs.",
+    "3. Direct Network Connections: Connects only to your configured IPTV/EPG servers and GitHub for updates.",
+    "4. QR Remote Security: Runs strictly within your local home Wi-Fi network.",
+    "5. Safe Bug Reports: Private subscription keys are automatically masked with asterisks (***)."
 )
 
 fun buildArchiveStreamUrl(channel: Channel, startMs: Long, stopMs: Long): String {
@@ -164,16 +162,11 @@ enum class AppThemePalette(
     val text: Color,
     val subtext: Color
 ) {
-    // 1 и 2 оставлены в точности как ты просил
     DARK_EMERALD("dark_emerald", "🌑 Тёмная 1: Графит и Изумруд", "🌑 Dark 1: Obsidian & Emerald", true, Color(0xFF121417), Color(0xFF1C2026), Color(0xFF19322B), Color(0xFF10B981), Color.Black, Color(0xFFF3F4F6), Color(0xFF9CA3AF)),
     DARK_AMETHYST("dark_amethyst", "🌌 Тёмная 2: Королевский Аметист", "🌌 Dark 2: Royal Amethyst & Gold", true, Color(0xFF16121E), Color(0xFF231D30), Color(0xFF35284D), Color(0xFFF59E0B), Color.Black, Color(0xFFFAF5FF), Color(0xFFB8A9C9)),
-
-    // Переработанные гармоничные тёмные темы (3, 4, 5)
     DARK_OCEAN("dark_ocean", "🌊 Тёмная 3: Полночный Сапфир", "🌊 Dark 3: Midnight Sapphire", true, Color(0xFF0E141D), Color(0xFF172130), Color(0xFF1E324A), Color(0xFF38BDF8), Color(0xFF082F49), Color(0xFFF1F5F9), Color(0xFF94A3B8)),
     DARK_RUBY("dark_ruby", "🍷 Тёмная 4: Бархатный Рубин", "🍷 Dark 4: Velvet Ruby", true, Color(0xFF141115), Color(0xFF211B22), Color(0xFF381E28), Color(0xFFF43F5E), Color.White, Color(0xFFF8FAFC), Color(0xFFA89FA8)),
     DARK_MOCHA("dark_mocha", "☕ Тёмная 5: Кофейный Кварц", "☕ Dark 5: Espresso & Caramel", true, Color(0xFF141210), Color(0xFF211D1A), Color(0xFF332922), Color(0xFFE5A967), Color(0xFF1C130A), Color(0xFFF5F0EB), Color(0xFFA89F96)),
-
-    // Переработанные сбалансированные светлые темы с мягким контрастом (6, 7, 8, 9, 10)
     LIGHT_NORDIC("light_nordic", "☀️ Светлая 1: Нордический Лёд", "☀️ Light 1: Nordic Ice", false, Color(0xFFE2E8F0), Color(0xFFF8FAFC), Color(0xFFDBEAFE), Color(0xFF0284C7), Color.White, Color(0xFF1E293B), Color(0xFF64748B)),
     LIGHT_LATTE("light_latte", "🌅 Светлая 2: Песочный Кашемир", "🌅 Light 2: Warm Cashmere", false, Color(0xFFEAE3DC), Color(0xFFFAF7F2), Color(0xFFF5E6D3), Color(0xFFC25E00), Color.White, Color(0xFF292524), Color(0xFF78716C)),
     LIGHT_MINT("light_mint", "🌿 Светлая 3: Шалфей и Эвкалипт", "🌿 Light 3: Sage & Eucalyptus", false, Color(0xFFDCE7E1), Color(0xFFF4F9F6), Color(0xFFCBE3D6), Color(0xFF0D9488), Color.White, Color(0xFF1E2925), Color(0xFF5C7067)),
@@ -238,7 +231,7 @@ val RuStrings = Strings(
     reconnecting = "Поток прервался, переподключаемся...",
     catSourcesGroup = "📡 Источники и Контент (Плейлисты, EPG, Порталы, QR)",
     catAppearance = "🎨 Внешний вид, Темы и Язык",
-    catPlayer = "⚙️ Плеер, Устройство и Управление",
+    catPlayer = "⚙️ Плеер, Часы, Устройство и Управление",
     catPlaylists = "📺 Плейлисты (M3U / M3U8)",
     catEpg = "📅 Телепрограмма (EPG)",
     catPortals = "🎬 Порталы (VPortal и Stalker)",
@@ -250,8 +243,8 @@ val RuStrings = Strings(
     catReportIssue = "🐞 Сообщить о проблеме",
     activePlaylistLabel = "Активный плейлист:",
     activeEpgLabel = "Активный источник EPG:",
-    epgFromPlaylistOption = "🔄 Автоматически из плейлиста (url-tvg)",
-    usePlaylistEpgSwitch = "Брать телепрограмму (EPG) из самого плейлиста",
+    epgFromPlaylistOption = "🔄 Автоматически (из плейлиста / TVLider)",
+    usePlaylistEpgSwitch = "Брать телепрограмму (EPG) автоматически",
     addSourceName = "Название (например: TVLider Основной)",
     addSourceUrl = "Ссылка (http://...)",
     addBtn = "➕ Добавить в список",
@@ -275,7 +268,7 @@ val EnStrings = Strings(
     reconnecting = "Stream dropped, reconnecting...",
     catSourcesGroup = "📡 Sources & Content (Playlists, EPG, Portals, QR)",
     catAppearance = "🎨 Appearance, Themes & Language",
-    catPlayer = "⚙️ Player, Device & Controls",
+    catPlayer = "⚙️ Player, Clock, Device & Controls",
     catPlaylists = "📺 Playlists (M3U / M3U8)",
     catEpg = "📅 TV Guide (EPG)",
     catPortals = "🎬 Portals (VPortal & Stalker)",
@@ -287,8 +280,8 @@ val EnStrings = Strings(
     catReportIssue = "🐞 Report an Issue",
     activePlaylistLabel = "Active Playlist:",
     activeEpgLabel = "Active EPG Source:",
-    epgFromPlaylistOption = "🔄 Auto from Playlist (url-tvg)",
-    usePlaylistEpgSwitch = "Prefer EPG URL embedded inside M3U playlist",
+    epgFromPlaylistOption = "🔄 Auto (from Playlist / Default)",
+    usePlaylistEpgSwitch = "Load EPG automatically",
     addSourceName = "Name (e.g. Main TV)",
     addSourceUrl = "URL (http://...)",
     addBtn = "➕ Add to list",
@@ -335,6 +328,7 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     root.put("lang", prefs.getString("lang", "ru"))
     root.put("device_type", prefs.getString("device_type", "mobile"))
     root.put("control_mode", prefs.getString("control_mode", "touch"))
+    root.put("clock_pos", prefs.getInt("clock_pos", 0))
     root.put("theme_id", prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
     root.put("playlists_json", prefs.getString("playlists_json", "[]"))
     root.put("selected_playlist_id", prefs.getString("selected_playlist_id", ""))
@@ -366,6 +360,7 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
         .putString("lang", root.optString("lang", "ru"))
         .putString("device_type", root.optString("device_type", "mobile"))
         .putString("control_mode", root.optString("control_mode", "touch"))
+        .putInt("clock_pos", root.optInt("clock_pos", 0))
         .putString("theme_id", root.optString("theme_id", AppThemePalette.DARK_EMERALD.id))
         .putString("playlists_json", root.optString("playlists_json", "[]"))
         .putString("selected_playlist_id", root.optString("selected_playlist_id", ""))
