@@ -22,7 +22,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -32,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,14 +48,17 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 data class AudioTrackOption(
     val groupIndex: Int,
@@ -82,11 +88,16 @@ fun SmartVideoPlayer(
     useNativeController: Boolean,
     reconnectingText: String,
     modifier: Modifier = Modifier,
-    playerEngine: Int = 0, // 0 = ExoPlayer, 1 = Системный VideoView
+    playerEngine: Int = 0,
     isMuted: Boolean = false,
     enableSwipeGestures: Boolean = false,
+    playbackSpeed: Float = 1f,
+    initialSeekMs: Long = 0L,
+    seekCommand: Pair<Int, Long>? = null,
     showAudioSelectorDialog: Boolean = false,
-    onDismissAudioSelector: () -> Unit = {}
+    onDismissAudioSelector: () -> Unit = {},
+    onVideoQualityDetected: (String) -> Unit = {},
+    onPlaybackProgress: (posMs: Long, durMs: Long) -> Unit = { _, _ -> }
 ) {
     if (playerEngine == 1) {
         NativeAndroidVideoPlayer(
@@ -107,8 +118,13 @@ fun SmartVideoPlayer(
             modifier = modifier,
             isMuted = isMuted,
             enableSwipeGestures = enableSwipeGestures,
+            playbackSpeed = playbackSpeed,
+            initialSeekMs = initialSeekMs,
+            seekCommand = seekCommand,
             showAudioSelectorDialog = showAudioSelectorDialog,
-            onDismissAudioSelector = onDismissAudioSelector
+            onDismissAudioSelector = onDismissAudioSelector,
+            onVideoQualityDetected = onVideoQualityDetected,
+            onPlaybackProgress = onPlaybackProgress
         )
     }
 }
@@ -144,10 +160,7 @@ fun NativeAndroidVideoPlayer(
                         mp.setVolume(vol, vol)
                         mp.start()
                     }
-                    view.setOnErrorListener { _, _, _ ->
-                        hasError = true
-                        true
-                    }
+                    view.setOnErrorListener { _, _, _ -> hasError = true; true }
                     view.setVideoURI(Uri.parse(streamUrl))
                 }
             },
@@ -172,13 +185,23 @@ fun ExoVideoPlayer(
     modifier: Modifier = Modifier,
     isMuted: Boolean = false,
     enableSwipeGestures: Boolean = false,
+    playbackSpeed: Float = 1f,
+    initialSeekMs: Long = 0L,
+    seekCommand: Pair<Int, Long>? = null,
     showAudioSelectorDialog: Boolean = false,
-    onDismissAudioSelector: () -> Unit = {}
+    onDismissAudioSelector: () -> Unit = {},
+    onVideoQualityDetected: (String) -> Unit = {},
+    onPlaybackProgress: (posMs: Long, durMs: Long) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     var isReconnecting by remember { mutableStateOf(false) }
     var gestureHudText by remember { mutableStateOf("") }
     var audioTracks by remember { mutableStateOf<List<AudioTrackOption>>(emptyList()) }
+    var didInitialSeek by remember(streamUrl, initialSeekMs) { mutableStateOf(false) }
+    var detectedRes by remember(streamUrl) { mutableStateOf("") }
+    var detectedFps by remember(streamUrl) { mutableStateOf("") }
+    val curOnQuality by rememberUpdatedState(onVideoQualityDetected)
+    val curOnProgress by rememberUpdatedState(onPlaybackProgress)
     val scope = rememberCoroutineScope()
 
     val exoPlayer = remember(bufferMode) {
@@ -193,13 +216,18 @@ fun ExoVideoPlayer(
         ExoPlayer.Builder(context).setLoadControl(loadControl).build().apply { playWhenReady = true }
     }
 
-    LaunchedEffect(isMuted, exoPlayer) {
-        exoPlayer.volume = if (isMuted) 0f else 1f
+    LaunchedEffect(isMuted, exoPlayer) { exoPlayer.volume = if (isMuted) 0f else 1f }
+    LaunchedEffect(playbackSpeed, exoPlayer) { exoPlayer.setPlaybackSpeed(playbackSpeed) }
+    LaunchedEffect(seekCommand) {
+        if (seekCommand != null) {
+            exoPlayer.seekTo((exoPlayer.currentPosition + seekCommand.second).coerceAtLeast(0L))
+        }
     }
 
     LaunchedEffect(streamUrl, userAgent, exoPlayer) {
         if (streamUrl.isBlank()) return@LaunchedEffect
         isReconnecting = false
+        curOnQuality("")
         val httpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(userAgent ?: "Lavf/60.3.100")
             .setAllowCrossProtocolRedirects(true)
@@ -210,6 +238,17 @@ fun ExoVideoPlayer(
         exoPlayer.setMediaSource(mediaSource)
         exoPlayer.prepare()
         exoPlayer.playWhenReady = true
+    }
+
+    LaunchedEffect(exoPlayer, streamUrl) {
+        while (true) {
+            delay(4000L)
+            val dur = exoPlayer.duration
+            val pos = exoPlayer.currentPosition
+            if (dur > 30000L && pos > 5000L) {
+                curOnProgress(pos, dur)
+            }
+        }
     }
 
     DisposableEffect(exoPlayer) {
@@ -223,7 +262,26 @@ fun ExoVideoPlayer(
                 }
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) isReconnecting = false
+                if (playbackState == Player.STATE_READY) {
+                    isReconnecting = false
+                    if (!didInitialSeek && initialSeekMs > 5000L) {
+                        didInitialSeek = true
+                        exoPlayer.seekTo(initialSeekMs)
+                    }
+                }
+            }
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                val h = videoSize.height
+                if (h > 0) {
+                    detectedRes = when {
+                        h >= 2100 -> "4K"
+                        h >= 1050 -> "1080p"
+                        h >= 700 -> "720p"
+                        else -> "${h}p"
+                    }
+                    val combined = listOf(detectedRes, detectedFps).filter { it.isNotBlank() }.joinToString(" • ")
+                    curOnQuality(combined)
+                }
             }
             override fun onTracksChanged(tracks: Tracks) {
                 val list = mutableListOf<AudioTrackOption>()
@@ -237,6 +295,13 @@ fun ExoVideoPlayer(
                             val title = listOf(lbl, lang, chs).filter { it.isNotBlank() }.joinToString(" • ")
                                 .ifEmpty { "Дорожка #${list.size + 1}" }
                             list.add(AudioTrackOption(gIdx, tIdx, title, group.isTrackSelected(tIdx)))
+                        }
+                    } else if (group.type == C.TRACK_TYPE_VIDEO && group.length > 0) {
+                        val fps = group.getTrackFormat(0).frameRate
+                        if (fps > 1f) {
+                            detectedFps = "${fps.roundToInt()}fps"
+                            val combined = listOf(detectedRes, detectedFps).filter { it.isNotBlank() }.joinToString(" • ")
+                            if (combined.isNotBlank()) curOnQuality(combined)
                         }
                     }
                 }
@@ -278,9 +343,7 @@ fun ExoVideoPlayer(
                             }
                         }
                     }
-                    TextButton(onClick = onDismissAudioSelector, modifier = Modifier.align(Alignment.End)) {
-                        Text("Закрыть", color = Color.White)
-                    }
+                    TextButton(onClick = onDismissAudioSelector, modifier = Modifier.align(Alignment.End)) { Text("Закрыть", color = Color.White) }
                 }
             }
         }
@@ -307,9 +370,7 @@ fun ExoVideoPlayer(
                         if (win != null) {
                             val cur = win.attributes.screenBrightness.let { if (it < 0f) 0.5f else it }
                             val next = (cur + delta).coerceIn(0.05f, 1.0f)
-                            val lp = win.attributes
-                            lp.screenBrightness = next
-                            win.attributes = lp
+                            val lp = win.attributes; lp.screenBrightness = next; win.attributes = lp
                             gestureHudText = "☀️ Яркость: ${(next * 100).toInt()}%"
                         }
                     } else {
@@ -327,27 +388,21 @@ fun ExoVideoPlayer(
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
-                    player = exoPlayer
-                    useController = useNativeController
-                    setShowSubtitleButton(true)
+                    player = exoPlayer; useController = useNativeController; setShowSubtitleButton(true)
                     this.resizeMode = aspectConst
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 }
             },
             update = { view ->
-                view.player = exoPlayer
-                view.useController = useNativeController
-                view.resizeMode = aspectConst
+                view.player = exoPlayer; view.useController = useNativeController; view.resizeMode = aspectConst
             },
             modifier = Modifier.fillMaxSize()
         )
-
         if (gestureHudText.isNotEmpty()) {
             Box(modifier = Modifier.align(Alignment.Center).background(Color(0xDD000000), RoundedCornerShape(14.dp)).padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text(gestureHudText, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
             }
         }
-
         if (isReconnecting) {
             Box(modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp).background(Color(0xCC000000), RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
                 Text(reconnectingText, color = Color(0xFFF59E0B), fontSize = 13.sp)
@@ -356,24 +411,160 @@ fun ExoVideoPlayer(
     }
 }
 
+// ================= КАРТОЧКА ФИЛЬМА (VOD) С ОПИСАНИЕМ И ПРОДОЛЖЕНИЕМ ПРОСМОТРА =================
+
+@Composable
+fun VodDetailsDialog(
+    S: Strings,
+    theme: AppThemePalette,
+    movie: VodMovie,
+    savedProgress: VodProgressItem?,
+    onPlayFromStart: () -> Unit,
+    onResume: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().heightIn(max = 580.dp)) {
+            Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(modifier = Modifier.width(105.dp).height(150.dp).clip(RoundedCornerShape(12.dp)).background(theme.bg), contentAlignment = Alignment.Center) {
+                        if (!movie.posterUrl.isNullOrBlank()) {
+                            AsyncImage(model = movie.posterUrl, contentDescription = movie.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        } else {
+                            Icon(Icons.Default.Movie, null, tint = theme.primary, modifier = Modifier.size(44.dp))
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(movie.title, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.text)
+                        if (movie.year.isNotBlank() || movie.rating.isNotBlank()) {
+                            Text(listOfNotNull(movie.year.takeIf { it.isNotBlank() }, movie.rating.takeIf { it.isNotBlank() }?.let { "⭐ $it" }).joinToString("  •  "), fontSize = 13.sp, color = theme.primary, fontWeight = FontWeight.Bold)
+                        }
+                        Text(movie.category, fontSize = 12.sp, color = theme.subtext)
+                    }
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Close, null, tint = theme.text) }
+                }
+
+                if (movie.description.isNotBlank()) {
+                    Text(movie.description, fontSize = 13.sp, color = theme.text)
+                }
+
+                if (savedProgress != null && savedProgress.positionMs > 10000L) {
+                    val posStr = formatTimeDuration(savedProgress.positionMs)
+                    Button(onClick = { onResume(savedProgress.positionMs) }, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                        Icon(Icons.Default.PlayArrow, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (S.isRu) "▶ Продолжить с $posStr" else "▶ Resume from $posStr", fontWeight = FontWeight.Bold)
+                    }
+                    OutlinedButton(onClick = onPlayFromStart, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (S.isRu) "🔄 Смотреть сначала" else "🔄 Watch from start")
+                    }
+                } else {
+                    Button(onClick = onPlayFromStart, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+                        Icon(Icons.Default.PlayArrow, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (S.isRu) "▶ Смотреть" else "▶ Play", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ================= ОКНО СКРЫТИЯ КАТЕГОРИЙ ПЛЕЙЛИСТА =================
+
+@Composable
+fun HiddenCategoriesDialog(
+    S: Strings,
+    theme: AppThemePalette,
+    allGroups: List<String>,
+    hiddenGroups: Set<String>,
+    onToggleGroup: (String) -> Unit,
+    onShowAll: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (S.isRu) "👁 Видимые категории" else "👁 Visible Categories", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.primary)
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null, tint = theme.text) }
+                }
+                Text(if (S.isRu) "Снимите галочки с ненужных категорий, чтобы скрыть их:" else "Uncheck groups to hide them:", fontSize = 12.sp, color = theme.subtext, modifier = Modifier.padding(bottom = 8.dp))
+                LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    items(allGroups) { grp ->
+                        val isVisible = !hiddenGroups.contains(grp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg)
+                                .clickable { onToggleGroup(grp) }.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(grp, color = if (isVisible) theme.text else theme.subtext, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                            Checkbox(checked = isVisible, onCheckedChange = { onToggleGroup(grp) })
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = onShowAll, modifier = Modifier.weight(1f)) { Text(if (S.isRu) "Показать все" else "Show all") }
+                    Button(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text(if (S.isRu) "Готово" else "Done") }
+                }
+            }
+        }
+    }
+}
+
+// ================= ОКНО ТАЙМЕРА СНА =================
+
+@Composable
+fun SleepTimerDialog(
+    S: Strings,
+    theme: AppThemePalette,
+    currentMinutesLeft: Int,
+    onSelectMinutes: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp)) {
+            Column(modifier = Modifier.padding(18.dp).widthIn(min = 250.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(if (S.isRu) "⏱ Таймер сна" else "⏱ Sleep Timer", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.primary)
+                if (currentMinutesLeft > 0) {
+                    Text(if (S.isRu) "Выключение через: $currentMinutesLeft мин" else "Stopping in: ${currentMinutesLeft}m", fontSize = 13.sp, color = theme.text)
+                }
+                listOf(0, 15, 30, 60, 90).forEach { mins ->
+                    val label = if (mins == 0) (if (S.isRu) "🚫 Отключить таймер" else "🚫 Turn Off") else "⏱ $mins мин"
+                    OutlinedButton(onClick = { onSelectMinutes(mins); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
+                        Text(label, color = theme.text, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ================= 3-КОЛОНОЧНЫЙ ПРОЗРАЧНЫЙ ТВ-ГИД С НАПОМИНАНИЯМИ =================
+
 @Composable
 fun TiviMateTvOverlay(
     S: Strings,
     theme: AppThemePalette,
     channels: List<Channel>,
+    hiddenGroups: Set<String>,
     epgScheduleMap: Map<String, List<EpgProgramItem>>,
-    favoriteIds: Set<String>,
+    reminders: List<ProgramReminder>,
     currentChannel: Channel?,
     onSelectChannel: (Channel) -> Unit,
     onPlayArchive: (Channel, EpgProgramItem) -> Unit,
+    onToggleReminder: (Channel, EpgProgramItem) -> Unit,
     onClose: () -> Unit
 ) {
-    val groups = remember(channels, S) { listOf(S.allGroups) + channels.map { it.group }.distinct() }
-    var selGroup by remember { mutableStateOf(currentChannel?.group ?: S.allGroups) }
-    val groupChannels = remember(channels, selGroup, S) {
-        if (selGroup == S.allGroups) channels else channels.filter { it.group == selGroup }
+    val visibleChannels = remember(channels, hiddenGroups) { channels.filterNot { hiddenGroups.contains(it.group) } }
+    val groups = remember(visibleChannels, S) { listOf(S.allGroups) + visibleChannels.map { it.group }.distinct() }
+    var selGroup by remember { mutableStateOf(currentChannel?.group?.takeIf { !hiddenGroups.contains(it) } ?: S.allGroups) }
+    val groupChannels = remember(visibleChannels, selGroup, S) {
+        if (selGroup == S.allGroups) visibleChannels else visibleChannels.filter { it.group == selGroup }
     }
-    var previewChannel by remember(currentChannel) { mutableStateOf(currentChannel ?: channels.firstOrNull()) }
+    var previewChannel by remember(currentChannel) { mutableStateOf(currentChannel ?: visibleChannels.firstOrNull()) }
     val previewSchedule = remember(previewChannel, epgScheduleMap) {
         previewChannel?.let { findChannelSchedule(it, epgScheduleMap) } ?: emptyList()
     }
@@ -427,7 +618,7 @@ fun TiviMateTvOverlay(
                 if (previewSchedule.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Button(onClick = { previewChannel?.let { onSelectChannel(it); onClose() } }) {
-                            Text(if (S.isRu) "▶ Включить этот канал" else "▶ Watch Channel")
+                            Text(if (S.isRu) "▶ Включить" else "▶ Watch")
                         }
                     }
                 } else {
@@ -435,21 +626,28 @@ fun TiviMateTvOverlay(
                         items(previewSchedule) { prog ->
                             val isPast = prog.stopMs < now
                             val isNow = now in prog.startMs..prog.stopMs
+                            val isFuture = prog.startMs > now
                             val canArchive = isPast && (previewChannel?.catchupDays ?: 0) > 0
+                            val hasReminder = isFuture && reminders.any { it.channelId == previewChannel?.id && it.startMs == prog.startMs }
                             Column(
                                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
                                     .background(if (isNow) theme.selectedCard else Color(0x66000000))
-                                    .clickable(enabled = canArchive || isNow) {
+                                    .clickable(enabled = canArchive || isNow || isFuture) {
                                         val ch = previewChannel ?: return@clickable
                                         if (canArchive) { onPlayArchive(ch, prog); onClose() }
                                         else if (isNow) { onSelectChannel(ch); onClose() }
+                                        else if (isFuture) onToggleReminder(ch, prog)
                                     }
                                     .padding(8.dp)
                             ) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text(prog.timeRangeText, fontSize = 11.sp, color = Color.LightGray)
-                                    if (isNow) Text("🟢 ЭФИР", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
-                                    else if (canArchive) Text("⏪ АРХИВ", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B))
+                                    when {
+                                        isNow -> Text("🟢 ЭФИР", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                                        canArchive -> Text("⏪ АРХИВ", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B))
+                                        hasReminder -> Text("🔔 НАПОМНЮ", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
+                                        isFuture -> Text("🕒", fontSize = 10.sp, color = Color.Gray)
+                                    }
                                 }
                                 Text(prog.title, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 2)
                             }
@@ -485,9 +683,7 @@ fun MultiViewScreenOverlay(
             S = S, theme = theme, channels = allChannels, currentChannel = slots[pickingSlotIndex!!],
             onDismiss = { pickingSlotIndex = null },
             onSelect = { chosen ->
-                val mutable = slots.toMutableList()
-                mutable[pickingSlotIndex!!] = chosen
-                slots = mutable; pickingSlotIndex = null
+                val mutable = slots.toMutableList(); mutable[pickingSlotIndex!!] = chosen; slots = mutable; pickingSlotIndex = null
             }
         )
     }
@@ -550,8 +746,7 @@ fun ParentalPinDialog(
                 OutlinedTextField(
                     value = entered,
                     onValueChange = {
-                        entered = it.filter { c -> c.isDigit() }.take(4)
-                        error = false
+                        entered = it.filter { c -> c.isDigit() }.take(4); error = false
                         if (entered == expectedPin) onSuccess()
                     },
                     label = { Text(if (S.isRu) "Введите 4-значный PIN-код" else "Enter 4-digit PIN") },
