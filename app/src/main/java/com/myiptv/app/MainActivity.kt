@@ -48,12 +48,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
@@ -70,6 +73,25 @@ fun getAppVersionInfo(context: Context): Pair<String, Long> = runCatching {
     (pInfo.versionName ?: "1.0") to pInfo.longVersionCode
 }.getOrDefault("1.0" to 1L)
 
+fun findChannelSchedule(ch: Channel, epgMap: Map<String, List<EpgProgramItem>>): List<EpgProgramItem> {
+    if (epgMap.isEmpty()) return emptyList()
+    ch.epgId?.let { id ->
+        epgMap[id]?.let { return it }
+        epgMap[id.lowercase()]?.let { return it }
+    }
+    val lowName = ch.name.trim().lowercase()
+    epgMap[lowName]?.let { return it }
+    val cleanName = lowName.replace(" hd", "").replace(" fhd", "").replace(" 4k", "").replace(" orig", "").trim()
+    return epgMap[cleanName] ?: emptyList()
+}
+
+fun findCurrentProgram(ch: Channel, epgMap: Map<String, List<EpgProgramItem>>): EpgProgramItem? {
+    val list = findChannelSchedule(ch, epgMap)
+    if (list.isEmpty()) return null
+    val now = System.currentTimeMillis()
+    return list.find { now in it.startMs..it.stopMs }
+}
+
 class MainActivity : ComponentActivity() {
     private var webServer: SimpleQrWebServer? = null
 
@@ -84,6 +106,12 @@ class MainActivity : ComponentActivity() {
                 mutableStateOf(AppThemePalette.fromId(prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id)))
             }
             val S = if (isRu) RuStrings else EnStrings
+
+            // Настройки видеоплеера
+            var playerResizeMode by remember { mutableStateOf(prefs.getInt("player_resize", 0)) }
+            var playerBufferMode by remember { mutableStateOf(prefs.getInt("player_buffer", 1)) }
+            var playerDefaultUa by remember { mutableStateOf(prefs.getString("player_ua", "Lavf/60.3.100") ?: "Lavf/60.3.100") }
+            var openFullscreenOnTap by remember { mutableStateOf(prefs.getBoolean("player_auto_fs", false)) }
 
             var playlists by remember { mutableStateOf(loadNamedList(prefs, "playlists_json", "m3u_url", "Основной плейлист")) }
             var selectedPlaylistId by remember { mutableStateOf(prefs.getString("selected_playlist_id", playlists.firstOrNull()?.id ?: "") ?: "") }
@@ -103,7 +131,7 @@ class MainActivity : ComponentActivity() {
             var isLoadingMoreVod by remember { mutableStateOf(false) }
             var vodNoticeMessage by remember { mutableStateOf("") }
 
-            var epgMap by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+            var epgScheduleMap by remember { mutableStateOf<Map<String, List<EpgProgramItem>>>(emptyMap()) }
             var detectedPlaylistEpgUrl by remember { mutableStateOf<String?>(null) }
             var isEpgLoading by remember { mutableStateOf(false) }
             var epgStatusText by remember { mutableStateOf(if (isRu) "Ожидание загрузки EPG..." else "Waiting for EPG...") }
@@ -115,8 +143,10 @@ class MainActivity : ComponentActivity() {
 
             var currentChannel by remember { mutableStateOf<Channel?>(null) }
             var previousChannel by remember { mutableStateOf<Channel?>(null) }
+            var activeArchiveStream by remember { mutableStateOf<Pair<String, String>?>(null) } // Название передачи -> Архивный URL
             var currentVodStream by remember { mutableStateOf<Pair<String, String>?>(null) }
             var isFullscreen by remember { mutableStateOf(false) }
+            var epgDialogChannel by remember { mutableStateOf<Channel?>(null) }
 
             val scope = rememberCoroutineScope()
 
@@ -130,6 +160,10 @@ class MainActivity : ComponentActivity() {
                     .putString("vportal_url", vportalUrl.trim())
                     .putString("stalker_url", stalkerUrl.trim())
                     .putString("stalker_mac", stalkerMac.trim())
+                    .putInt("player_resize", playerResizeMode)
+                    .putInt("player_buffer", playerBufferMode)
+                    .putString("player_ua", playerDefaultUa)
+                    .putBoolean("player_auto_fs", openFullscreenOnTap)
                     .apply()
             }
 
@@ -146,17 +180,17 @@ class MainActivity : ComponentActivity() {
                 }
                 scope.launch {
                     isEpgLoading = true
-                    epgStatusText = if (isRu) "⏳ Загрузка EPG: $epgUrlToLoad" else "⏳ Loading EPG: $epgUrlToLoad"
-                    val loadedEpg = NetworkLoader.loadEpgCurrentPrograms(epgUrlToLoad.trim())
-                    epgMap = loadedEpg
+                    epgStatusText = if (isRu) "⏳ Загрузка EPG и Архива: $epgUrlToLoad" else "⏳ Loading EPG: $epgUrlToLoad"
+                    val loadedSchedule = NetworkLoader.loadFullEpgSchedule(epgUrlToLoad.trim())
+                    epgScheduleMap = loadedSchedule
                     isEpgLoading = false
                     val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                    epgStatusText = if (loadedEpg.isNotEmpty()) {
-                        if (isRu) "✅ Обновлено в $timeStr (каналов с программой: ${loadedEpg.size})"
-                        else "✅ Updated at $timeStr (${loadedEpg.size} channels)"
+                    epgStatusText = if (loadedSchedule.isNotEmpty()) {
+                        if (isRu) "✅ Обновлено в $timeStr (расписание и архив для ${loadedSchedule.size / 2} каналов)"
+                        else "✅ Updated at $timeStr (${loadedSchedule.size / 2} channels)"
                     } else {
-                        if (isRu) "⚠️ Завершено ($timeStr), но текущих передач не найдено"
-                        else "⚠️ Finished ($timeStr), no active programs found"
+                        if (isRu) "⚠️ Завершено ($timeStr), но передач не найдено"
+                        else "⚠️ Finished ($timeStr), no programs found"
                     }
                 }
             }
@@ -209,6 +243,10 @@ class MainActivity : ComponentActivity() {
                 vportalUrl = prefs.getString("vportal_url", "") ?: ""
                 stalkerUrl = prefs.getString("stalker_url", "") ?: ""
                 stalkerMac = prefs.getString("stalker_mac", "") ?: ""
+                playerResizeMode = prefs.getInt("player_resize", 0)
+                playerBufferMode = prefs.getInt("player_buffer", 1)
+                playerDefaultUa = prefs.getString("player_ua", "Lavf/60.3.100") ?: "Lavf/60.3.100"
+                openFullscreenOnTap = prefs.getBoolean("player_auto_fs", false)
                 favoriteIds = prefs.getStringSet("favs", emptySet())?.toSet() ?: emptySet()
                 reloadAllData()
             }
@@ -217,11 +255,7 @@ class MainActivity : ComponentActivity() {
                 if (isLoadingMoreVod || vportalUrl.isBlank()) return
                 scope.launch {
                     isLoadingMoreVod = true
-                    val res = NetworkLoader.loadVPortalNode(
-                        rawPortalUrl = vportalUrl.trim(),
-                        customTargetUrl = nextPageMarker.targetApiUrl,
-                        customRequestJson = nextPageMarker.requestPayloadJson
-                    )
+                    val res = NetworkLoader.loadVPortalNode(vportalUrl.trim(), nextPageMarker.targetApiUrl, nextPageMarker.requestPayloadJson)
                     vportalDiagnostic = res.second
                     vodItems = vodItems.filterNot { it.id.startsWith("vp_next_") } + res.first
                     isLoadingMoreVod = false
@@ -242,11 +276,7 @@ class MainActivity : ComponentActivity() {
                 if (vportalUrl.isBlank()) return
                 scope.launch {
                     isLoading = true
-                    val res = NetworkLoader.loadVPortalNode(
-                        rawPortalUrl = vportalUrl.trim(),
-                        customTargetUrl = item.targetApiUrl,
-                        customRequestJson = item.requestPayloadJson
-                    )
+                    val res = NetworkLoader.loadVPortalNode(vportalUrl.trim(), item.targetApiUrl, item.requestPayloadJson)
                     vportalDiagnostic = res.second
                     val children = res.first
                     isLoading = false
@@ -259,7 +289,7 @@ class MainActivity : ComponentActivity() {
                         currentVodFolderTitle = item.title
                         vodItems = children
                     } else {
-                        vodNoticeMessage = "Ответ сервера на серию: $vportalDiagnostic"
+                        vodNoticeMessage = "Ответ сервера: $vportalDiagnostic"
                     }
                 }
             }
@@ -268,7 +298,7 @@ class MainActivity : ComponentActivity() {
                 if (vportalUrl.isBlank() || query.isBlank()) return
                 scope.launch {
                     isLoading = true
-                    val res = NetworkLoader.loadVPortalNode(rawPortalUrl = vportalUrl.trim(), searchQuery = query.trim())
+                    val res = NetworkLoader.loadVPortalNode(vportalUrl.trim(), searchQuery = query.trim())
                     vportalDiagnostic = res.second
                     isLoading = false
                     if (res.first.isNotEmpty()) {
@@ -329,6 +359,31 @@ class MainActivity : ComponentActivity() {
 
             MaterialTheme(colorScheme = colorScheme) {
                 Surface(modifier = Modifier.fillMaxSize(), color = themePalette.bg) {
+                    // Диалог полной Телепрограммы и Архива передач (Catch-Up)
+                    if (epgDialogChannel != null) {
+                        val ch = epgDialogChannel!!
+                        val schedule = remember(ch, epgScheduleMap) { findChannelSchedule(ch, epgScheduleMap) }
+                        EpgAndArchiveDialog(
+                            S = S,
+                            theme = themePalette,
+                            channel = ch,
+                            schedule = schedule,
+                            onDismiss = { epgDialogChannel = null },
+                            onPlayArchive = { prog ->
+                                currentChannel = ch
+                                currentVodStream = null
+                                activeArchiveStream = prog.title to buildArchiveStreamUrl(ch, prog.startMs, prog.stopMs)
+                                epgDialogChannel = null
+                            },
+                            onPlayLive = {
+                                currentChannel = ch
+                                currentVodStream = null
+                                activeArchiveStream = null
+                                epgDialogChannel = null
+                            }
+                        )
+                    }
+
                     if (isFirstLaunch) {
                         FirstLaunchLanguageScreen(themePalette) { selectedRu ->
                             isRu = selectedRu
@@ -338,17 +393,47 @@ class MainActivity : ComponentActivity() {
                         }
                     } else if (isFullscreen && (currentChannel != null || currentVodStream != null)) {
                         BackHandler { isFullscreen = false }
-                        val playUrl = currentVodStream?.second ?: currentChannel?.streamUrl ?: ""
-                        val playTitle = currentVodStream?.first ?: currentChannel?.name ?: ""
+                        val playUrl = currentVodStream?.second ?: activeArchiveStream?.second ?: currentChannel?.streamUrl ?: ""
+                        val playTitle = currentVodStream?.first
+                            ?: activeArchiveStream?.let { "⏪ Архив: ${it.first}" }
+                            ?: currentChannel?.name ?: ""
+                        val resizeLabels = if (isRu) listOf("По размеру", "16:9 Растянуть", "Zoom") else listOf("Fit", "Fill", "Zoom")
+
                         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-                            SmartVideoPlayer(streamUrl = playUrl, userAgent = currentChannel?.userAgent, reconnectingText = S.reconnecting, modifier = Modifier.fillMaxSize())
+                            SmartVideoPlayer(
+                                streamUrl = playUrl,
+                                userAgent = currentChannel?.userAgent ?: playerDefaultUa,
+                                resizeMode = playerResizeMode,
+                                bufferMode = playerBufferMode,
+                                reconnectingText = S.reconnecting,
+                                modifier = Modifier.fillMaxSize()
+                            )
                             Row(
-                                modifier = Modifier.align(Alignment.TopStart).padding(16.dp).background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 14.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier = Modifier.align(Alignment.TopStart).padding(14.dp).background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text(playTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                                Spacer(Modifier.width(16.dp))
-                                Button(onClick = { isFullscreen = false }) { Text(if (isRu) "Свернуть" else "Exit") }
+                                Text(playTitle, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1, modifier = Modifier.widthIn(max = 260.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        playerResizeMode = (playerResizeMode + 1) % 3
+                                        prefs.edit().putInt("player_resize", playerResizeMode).apply()
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                ) {
+                                    Text("📐 ${resizeLabels[playerResizeMode]}", color = Color.White, fontSize = 12.sp)
+                                }
+                                if (currentChannel != null && currentVodStream == null) {
+                                    OutlinedButton(
+                                        onClick = { epgDialogChannel = currentChannel },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(if (isRu) "📅 Гид / Архив" else "📅 EPG / Archive", color = Color(0xFF10B981), fontSize = 12.sp)
+                                    }
+                                }
+                                Button(onClick = { isFullscreen = false }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
+                                    Text(if (isRu) "Свернуть" else "Exit", fontSize = 12.sp)
+                                }
                             }
                         }
                     } else {
@@ -371,15 +456,23 @@ class MainActivity : ComponentActivity() {
                                     selectedPlaylistId = selectedPlaylistId,
                                     onSelectPlaylistId = { selectedPlaylistId = it; reloadAllData() },
                                     channels = channels,
-                                    epgMap = epgMap,
+                                    epgScheduleMap = epgScheduleMap,
                                     favoriteIds = favoriteIds,
                                     currentChannel = currentChannel,
                                     previousChannel = previousChannel,
+                                    activeArchiveStream = activeArchiveStream,
+                                    playerResizeMode = playerResizeMode,
+                                    playerBufferMode = playerBufferMode,
+                                    playerDefaultUa = playerDefaultUa,
                                     onSelectChannel = { ch ->
                                         if (currentChannel != null && currentChannel?.id != ch.id) previousChannel = currentChannel
                                         currentVodStream = null
+                                        activeArchiveStream = null
                                         currentChannel = ch
+                                        if (openFullscreenOnTap) isFullscreen = true
                                     },
+                                    onOpenEpgDialog = { ch -> epgDialogChannel = ch },
+                                    onResetToLive = { activeArchiveStream = null },
                                     onToggleFavorite = { ch ->
                                         val next = favoriteIds.toMutableSet()
                                         if (!next.add(ch.id)) next.remove(ch.id)
@@ -410,6 +503,14 @@ class MainActivity : ComponentActivity() {
                                     theme = themePalette,
                                     onSelectTheme = { themePalette = it; prefs.edit().putString("theme_id", it.id).apply() },
                                     onToggleLanguage = { isRu = !isRu; prefs.edit().putString("lang", if (isRu) "ru" else "en").apply() },
+                                    playerResizeMode = playerResizeMode,
+                                    playerBufferMode = playerBufferMode,
+                                    playerDefaultUa = playerDefaultUa,
+                                    openFullscreenOnTap = openFullscreenOnTap,
+                                    onPlayerResizeChange = { playerResizeMode = it; persistLists() },
+                                    onPlayerBufferChange = { playerBufferMode = it; persistLists() },
+                                    onPlayerUaChange = { playerDefaultUa = it; persistLists() },
+                                    onAutoFsChange = { openFullscreenOnTap = it; persistLists() },
                                     playlists = playlists,
                                     selectedPlaylistId = selectedPlaylistId,
                                     onSelectPlaylist = { selectedPlaylistId = it; reloadAllData() },
@@ -455,6 +556,90 @@ class MainActivity : ComponentActivity() {
                                     onSaveAndReload = { reloadAllData() },
                                     onSettingsImported = { refreshStateFromPrefs() }
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ================= ОКНО ТЕЛЕПРОГРАММЫ И АРХИВА (CATCH-UP) =================
+
+@Composable
+fun EpgAndArchiveDialog(
+    S: Strings,
+    theme: AppThemePalette,
+    channel: Channel,
+    schedule: List<EpgProgramItem>,
+    onDismiss: () -> Unit,
+    onPlayArchive: (EpgProgramItem) -> Unit,
+    onPlayLive: () -> Unit
+) {
+    val now = System.currentTimeMillis()
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = theme.card),
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)
+        ) {
+            Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("📅 ${channel.name}", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = theme.primary, maxLines = 1)
+                        Text(
+                            if (S.isRu) "Нажмите на прошедшую передачу для просмотра в Архиве" else "Tap any past program to watch Catch-Up Archive",
+                            fontSize = 12.sp,
+                            color = theme.subtext
+                        )
+                    }
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null, tint = theme.text) }
+                }
+                Spacer(Modifier.height(10.dp))
+
+                if (schedule.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            if (S.isRu) "Для канала «${channel.name}» программа передач пока не найдена.\nПроверьте статус загрузки EPG в Настройках."
+                            else "No TV guide found for ${channel.name}.",
+                            fontSize = 14.sp,
+                            color = theme.subtext
+                        )
+                    }
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+                        items(schedule) { prog ->
+                            val isPast = prog.stopMs < now
+                            val isNow = now in prog.startMs..prog.stopMs
+                            val badgeText = when {
+                                isNow -> if (S.isRu) "🟢 СЕЙЧАС В ЭФИРЕ" else "🟢 LIVE NOW"
+                                isPast -> if (S.isRu) "⏪ СМОТРЕТЬ В АРХИВЕ" else "⏪ WATCH ARCHIVE"
+                                else -> if (S.isRu) "🕒 БУДЕТ В ЭФИРЕ" else "🕒 UPCOMING"
+                            }
+                            val badgeColor = when {
+                                isNow -> Color(0xFF10B981)
+                                isPast -> Color(0xFFF59E0B)
+                                else -> theme.subtext
+                            }
+
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isNow) theme.selectedCard else theme.bg)
+                                    .border(if (isNow) 1.5.dp else 0.dp, if (isNow) theme.primary else Color.Transparent, RoundedCornerShape(12.dp))
+                                    .clickable(enabled = isPast || isNow) {
+                                        if (isPast) onPlayArchive(prog) else if (isNow) onPlayLive()
+                                    }
+                                    .padding(12.dp)
+                            ) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(prog.timeRangeText, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.subtext)
+                                    Text(badgeText, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = badgeColor)
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                Text(prog.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
                             }
                         }
                     }
@@ -553,11 +738,17 @@ fun LiveTvScreen(
     selectedPlaylistId: String,
     onSelectPlaylistId: (String) -> Unit,
     channels: List<Channel>,
-    epgMap: Map<String, String>,
+    epgScheduleMap: Map<String, List<EpgProgramItem>>,
     favoriteIds: Set<String>,
     currentChannel: Channel?,
     previousChannel: Channel?,
+    activeArchiveStream: Pair<String, String>?,
+    playerResizeMode: Int,
+    playerBufferMode: Int,
+    playerDefaultUa: String,
     onSelectChannel: (Channel) -> Unit,
+    onOpenEpgDialog: (Channel) -> Unit,
+    onResetToLive: () -> Unit,
     onToggleFavorite: (Channel) -> Unit,
     onFullscreen: () -> Unit,
     onOpenSettings: () -> Unit
@@ -605,25 +796,60 @@ fun LiveTvScreen(
         }
 
         if (currentChannel != null) {
-            Row(modifier = Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(16.dp)).background(Color.Black)) {
-                Box(modifier = Modifier.weight(1.35f).fillMaxHeight()) {
-                    SmartVideoPlayer(currentChannel.streamUrl, currentChannel.userAgent, S.reconnecting, Modifier.fillMaxSize().clickable { onFullscreen() })
+            val playUrl = activeArchiveStream?.second ?: currentChannel.streamUrl
+            val nowProg = findCurrentProgram(currentChannel, epgScheduleMap)
+
+            Row(modifier = Modifier.fillMaxWidth().height(215.dp).clip(RoundedCornerShape(16.dp)).background(Color.Black)) {
+                Box(modifier = Modifier.weight(1.3f).fillMaxHeight()) {
+                    SmartVideoPlayer(
+                        streamUrl = playUrl,
+                        userAgent = currentChannel.userAgent ?: playerDefaultUa,
+                        resizeMode = playerResizeMode,
+                        bufferMode = playerBufferMode,
+                        reconnectingText = S.reconnecting,
+                        modifier = Modifier.fillMaxSize().clickable { onFullscreen() }
+                    )
                 }
                 Column(modifier = Modifier.weight(1f).fillMaxHeight().background(theme.card).padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
                     Column {
                         Text("${currentChannel.number}. ${currentChannel.name}", fontWeight = FontWeight.Bold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = theme.primary)
-                        Text(currentChannel.group, fontSize = 12.sp, color = theme.subtext)
-                        val nowPlaying = currentChannel.epgId?.let { epgMap[it] } ?: epgMap[currentChannel.name]
-                        if (!nowPlaying.isNullOrBlank()) Text("📺 $nowPlaying", fontSize = 12.sp, color = theme.text, maxLines = 2)
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Button(onClick = onFullscreen, modifier = Modifier.weight(1f), contentPadding = PaddingValues(6.dp)) {
-                            Icon(Icons.Default.Fullscreen, null)
-                            Spacer(Modifier.width(4.dp))
-                            Text(S.fullscreen, fontSize = 11.sp, maxLines = 1)
+                        if (activeArchiveStream != null) {
+                            Text("⏪ Архив: ${activeArchiveStream.first}", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B), maxLines = 2)
+                        } else if (nowProg != null) {
+                            Text("🟢 ${nowProg.title}", fontSize = 12.sp, color = theme.text, maxLines = 2)
+                            Text(nowProg.timeRangeText, fontSize = 11.sp, color = theme.subtext)
+                        } else {
+                            Text(currentChannel.group, fontSize = 12.sp, color = theme.subtext)
                         }
-                        if (previousChannel != null) {
-                            OutlinedButton(onClick = { onSelectChannel(previousChannel) }, contentPadding = PaddingValues(6.dp)) { Icon(Icons.Default.History, null) }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // Кнопка открытия Телепрограммы и Архива передач
+                        OutlinedButton(
+                            onClick = { onOpenEpgDialog(currentChannel) },
+                            modifier = Modifier.fillMaxWidth().height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Default.Schedule, null, modifier = Modifier.size(16.dp), tint = theme.primary)
+                            Spacer(Modifier.width(4.dp))
+                            Text(if (S.isRu) "Программа / Архив" else "EPG / Archive", fontSize = 11.sp, maxLines = 1)
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Button(onClick = onFullscreen, modifier = Modifier.weight(1f).height(36.dp), contentPadding = PaddingValues(4.dp)) {
+                                Icon(Icons.Default.Fullscreen, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(S.fullscreen, fontSize = 11.sp, maxLines = 1)
+                            }
+                            if (activeArchiveStream != null) {
+                                OutlinedButton(onClick = onResetToLive, modifier = Modifier.height(36.dp), contentPadding = PaddingValues(horizontal = 8.dp)) {
+                                    Text("🔴 Эфир", fontSize = 11.sp, color = Color(0xFFEF4444))
+                                }
+                            } else if (previousChannel != null) {
+                                OutlinedButton(onClick = { onSelectChannel(previousChannel) }, modifier = Modifier.height(36.dp), contentPadding = PaddingValues(6.dp)) {
+                                    Icon(Icons.Default.History, null, modifier = Modifier.size(18.dp))
+                                }
+                            }
                         }
                     }
                 }
@@ -652,7 +878,8 @@ fun LiveTvScreen(
             items(filtered, key = { it.id }) { ch ->
                 val isPlaying = currentChannel?.id == ch.id
                 val isFav = favoriteIds.contains(ch.id)
-                val epgNow = ch.epgId?.let { epgMap[it] } ?: epgMap[ch.name]
+                val nowProg = findCurrentProgram(ch, epgScheduleMap)
+
                 Row(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                         .background(if (isPlaying) theme.selectedCard else theme.card)
@@ -661,14 +888,22 @@ fun LiveTvScreen(
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("${ch.number}", color = theme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.width(40.dp))
+                    Text("${ch.number}", color = theme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.width(38.dp))
                     if (!ch.logoUrl.isNullOrBlank()) {
                         AsyncImage(model = ch.logoUrl, contentDescription = ch.name, modifier = Modifier.size(38.dp).clip(RoundedCornerShape(6.dp)), contentScale = ContentScale.Fit)
                         Spacer(Modifier.width(10.dp))
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text(ch.name, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, color = theme.text)
-                        Text(epgNow ?: ch.group, fontSize = 12.sp, color = if (epgNow != null) theme.primary else theme.subtext, maxLines = 1)
+                        if (nowProg != null) {
+                            Text("📺 ${nowProg.title}", fontSize = 12.sp, color = theme.primary, maxLines = 1)
+                        } else {
+                            Text(ch.group, fontSize = 12.sp, color = theme.subtext, maxLines = 1)
+                        }
+                    }
+                    // Кнопка открытия расписания и архива конкретного канала
+                    IconButton(onClick = { onOpenEpgDialog(ch) }) {
+                        Icon(Icons.Default.Schedule, null, tint = theme.primary)
                     }
                     IconButton(onClick = { onToggleFavorite(ch) }) {
                         Icon(if (isFav) Icons.Default.Star else Icons.Default.StarBorder, null, tint = if (isFav) Color(0xFFF59E0B) else theme.subtext)
@@ -783,6 +1018,14 @@ fun AccordionSettingsScreen(
     theme: AppThemePalette,
     onSelectTheme: (AppThemePalette) -> Unit,
     onToggleLanguage: () -> Unit,
+    playerResizeMode: Int,
+    playerBufferMode: Int,
+    playerDefaultUa: String,
+    openFullscreenOnTap: Boolean,
+    onPlayerResizeChange: (Int) -> Unit,
+    onPlayerBufferChange: (Int) -> Unit,
+    onPlayerUaChange: (String) -> Unit,
+    onAutoFsChange: (Boolean) -> Unit,
     playlists: List<NamedSource>,
     selectedPlaylistId: String,
     onSelectPlaylist: (String) -> Unit,
@@ -833,8 +1076,8 @@ fun AccordionSettingsScreen(
                 context.contentResolver.openOutputStream(uri)?.use { out ->
                     out.write(exportAllSettingsToJson(prefs).toByteArray(Charsets.UTF_8))
                 }
-                backupStatus = if (S.isRu) "✅ Настройки успешно сохранены в файл!" else "✅ Settings exported to file!"
-            }.onFailure { backupStatus = "❌ Ошибка сохранения: ${it.localizedMessage}" }
+                backupStatus = if (S.isRu) "✅ Настройки успешно сохранены в файл!" else "✅ Settings exported!"
+            }.onFailure { backupStatus = "❌ Ошибка: ${it.localizedMessage}" }
         }
     }
 
@@ -845,13 +1088,13 @@ fun AccordionSettingsScreen(
                 if (importAllSettingsFromJson(prefs, jsonText)) {
                     backupStatus = if (S.isRu) "✅ Настройки успешно импортированы!" else "✅ Settings imported!"
                     onSettingsImported()
-                } else backupStatus = "❌ Неверный формат файла настроек"
-            }.onFailure { backupStatus = "❌ Ошибка чтения файла: ${it.localizedMessage}" }
+                } else backupStatus = "❌ Неверный формат файла"
+            }.onFailure { backupStatus = "❌ Ошибка: ${it.localizedMessage}" }
         }
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        // 0. ВИД, ТЕМЫ И ЯЗЫК
+        // 0. ВИД, 10 ТЕМ И ЯЗЫК
         ExpandableSectionRow(S.catAppearance, expandedRow == 0, theme, { toggleRow(0) }) {
             AppThemePalette.entries.forEach { item ->
                 val isChosen = item == theme
@@ -877,8 +1120,57 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 1. ПЛЕЙЛИСТЫ M3U
-        ExpandableSectionRow("${S.catPlaylists} (${playlists.size})", expandedRow == 1, theme, { toggleRow(1) }) {
+        // 1. НАСТРОЙКИ ВИДЕОПЛЕЕРА
+        ExpandableSectionRow(S.catPlayer, expandedRow == 1, theme, { toggleRow(1) }) {
+            val resizeOpts = listOf(
+                "0" to (if (S.isRu) "📐 По размеру экрана (Fit — без обрезки)" else "📐 Fit Screen"),
+                "1" to (if (S.isRu) "📐 Растянуть на весь экран (16:9 Fill)" else "📐 Stretch 16:9 Fill"),
+                "2" to (if (S.isRu) "📐 Заполнить с обрезкой краев (Zoom)" else "📐 Zoom Crop")
+            )
+            SourceDropdownSelector(
+                label = if (S.isRu) "Формат изображения (Пропорции):" else "Aspect Ratio:",
+                selectedTitle = resizeOpts.find { it.first == playerResizeMode.toString() }?.second ?: resizeOpts.first().second,
+                options = resizeOpts,
+                theme = theme,
+                onSelect = { onPlayerResizeChange(it.toIntOrNull() ?: 0) }
+            )
+
+            val bufOpts = listOf(
+                "0" to (if (S.isRu) "🚀 Быстрый старт (Буфер 2 сек)" else "🚀 Fast Start (2s Buffer)"),
+                "1" to (if (S.isRu) "⚖️ Сбалансированный (Буфер 5 сек)" else "⚖️ Balanced (5s Buffer)"),
+                "2" to (if (S.isRu) "🛡 Макс. стабильность (Буфер 12 сек — от зависаний)" else "🛡 Max Stability (12s Buffer)")
+            )
+            SourceDropdownSelector(
+                label = if (S.isRu) "Размер буфера видеоплеера:" else "Video Buffer Size:",
+                selectedTitle = bufOpts.find { it.first == playerBufferMode.toString() }?.second ?: bufOpts[1].second,
+                options = bufOpts,
+                theme = theme,
+                onSelect = { onPlayerBufferChange(it.toIntOrNull() ?: 1) }
+            )
+
+            val uaOpts = listOf(
+                "Lavf/60.3.100" to "Lavf / FFmpeg (По умолчанию)",
+                "Mozilla/5.0 (SmartHub; SMART-TV) OttPlayer/2.0" to "OttPlayer SmartTV",
+                "VLC/3.0.20 LibVLC/3.0.20" to "VLC Media Player",
+                "TiviMate/4.7.0 (Android TV)" to "TiviMate Android TV",
+                "Mozilla/5.0 (QtEmbedded; U; Linux; C) MAG200" to "MAG250 Set-Top Box"
+            )
+            SourceDropdownSelector(
+                label = if (S.isRu) "Представляться серверу как (User-Agent):" else "Default User-Agent:",
+                selectedTitle = uaOpts.find { it.first == playerDefaultUa }?.second ?: playerDefaultUa,
+                options = uaOpts,
+                theme = theme,
+                onSelect = { onPlayerUaChange(it) }
+            )
+
+            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(if (S.isRu) "Открывать канал сразу на весь экран при нажатии" else "Open channel in fullscreen on tap", fontWeight = FontWeight.Bold, color = theme.text, modifier = Modifier.weight(1f))
+                Switch(checked = openFullscreenOnTap, onCheckedChange = onAutoFsChange)
+            }
+        }
+
+        // 2. ПЛЕЙЛИСТЫ M3U
+        ExpandableSectionRow("${S.catPlaylists} (${playlists.size})", expandedRow == 2, theme, { toggleRow(2) }) {
             if (playlists.isNotEmpty()) {
                 val curName = playlists.find { it.id == selectedPlaylistId }?.name ?: playlists.first().name
                 SourceDropdownSelector(S.activePlaylistLabel, "📺 $curName", playlists.map { it.id to it.name }, theme, onSelectPlaylist)
@@ -913,8 +1205,8 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 2. ТЕЛЕПРОГРАММА EPG
-        ExpandableSectionRow(S.catEpg, expandedRow == 2, theme, { toggleRow(2) }) {
+        // 3. ТЕЛЕПРОГРАММА EPG
+        ExpandableSectionRow(S.catEpg, expandedRow == 3, theme, { toggleRow(3) }) {
             Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(theme.bg).border(1.dp, theme.primary.copy(alpha = 0.4f), RoundedCornerShape(12.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (S.isRu) "Состояние телепрограммы (EPG):" else "EPG Status:", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = theme.primary)
                 if (isEpgLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().height(6.dp), color = theme.primary)
@@ -966,8 +1258,8 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 3. ПОРТАЛЫ (VPORTAL И STALKER)
-        ExpandableSectionRow(S.catPortals, expandedRow == 3, theme, { toggleRow(3) }) {
+        // 4. ПОРТАЛЫ (VPORTAL И STALKER)
+        ExpandableSectionRow(S.catPortals, expandedRow == 4, theme, { toggleRow(4) }) {
             Text("🎬 VPortal (TVlider / iLook)", fontWeight = FontWeight.Bold, color = theme.primary)
             OutlinedTextField(
                 value = vportalUrl,
@@ -1005,8 +1297,8 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 4. QR-ПУЛЬТ ДЛЯ ТЕЛЕФОНА
-        ExpandableSectionRow(S.catQr, expandedRow == 4, theme, { toggleRow(4) }) {
+        // 5. QR-ПУЛЬТ ДЛЯ ТЕЛЕФОНА
+        ExpandableSectionRow(S.catQr, expandedRow == 5, theme, { toggleRow(5) }) {
             val localIp = remember { getDeviceLocalIp() }
             val remoteUrl = "http://$localIp:8989"
             val qrBitmap = remember(remoteUrl) { generateQrBitmap(remoteUrl, 360) }
@@ -1019,8 +1311,8 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 5. ИМПОРТ И ЭКСПОРТ НАСТРОЕК
-        ExpandableSectionRow(S.catBackup, expandedRow == 5, theme, { toggleRow(5) }) {
+        // 6. ИМПОРТ И ЭКСПОРТ НАСТРОЕК
+        ExpandableSectionRow(S.catBackup, expandedRow == 6, theme, { toggleRow(6) }) {
             Button(onClick = { exportLauncher.launch("CCTV-Plus-Backup.json") }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.UploadFile, null)
                 Spacer(Modifier.width(8.dp))
@@ -1058,12 +1350,17 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 6. СПИСОК ИЗМЕНЕНИЙ (CHANGELOG)
-        ExpandableSectionRow(S.catChangelog, expandedRow == 6, theme, { toggleRow(6) }) {
-            AppChangelogHistory.forEach { rel ->
+        // 7. СПИСОК ИЗМЕНЕНИЙ (CHANGELOG — СИНХРОНИЗИРОВАН С ВЕРСИЕЙ СБОРКИ!)
+        ExpandableSectionRow(S.catChangelog, expandedRow == 7, theme, { toggleRow(7) }) {
+            AppChangelogHistory.forEachIndexed { idx, rel ->
+                val verTitle = if (idx == 0 || rel.version == "CURRENT") {
+                    "v$installedVerName (Build #$installedVerCode • Текущая)"
+                } else {
+                    rel.version
+                }
                 Column(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg).padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(rel.version, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = theme.primary)
+                        Text(verTitle, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, color = theme.primary)
                         Text(rel.date, fontSize = 12.sp, color = theme.subtext)
                     }
                     val items = if (S.isRu) rel.changesRu else rel.changesEn
@@ -1074,10 +1371,10 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // 7. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ
-        ExpandableSectionRow(if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)", expandedRow == 7, theme, { toggleRow(7) }) {
+        // 8. ОБНОВЛЕНИЕ ПРИЛОЖЕНИЯ
+        ExpandableSectionRow(if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)", expandedRow == 8, theme, { toggleRow(8) }) {
             Text(
-                text = if (S.isRu) "Установленная версия: v$installedVerName (Сборка #$installedVerCode)" else "Installed version: v$installedVerName (Build #$installedVerCode)",
+                text = if (S.isRu) "Установленная версия: v$installedVerName (Build #$installedVerCode)" else "Installed version: v$installedVerName (Build #$installedVerCode)",
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = theme.subtext
@@ -1156,7 +1453,7 @@ fun AccordionSettingsScreen(
             }
         }
 
-        // ПОДВАЛ НАСТРОЕК: ПОДПИСЬ РАЗРАБОТЧИКА И АВТОМАТИЧЕСКИЙ НОМЕР ВЕРСИИ
+        // ПОДВАЛ НАСТРОЕК: ПОДПИСЬ РАЗРАБОТЧИКА И НОМЕР ВЕРСИИ
         Spacer(Modifier.height(6.dp))
         Column(
             modifier = Modifier
@@ -1188,22 +1485,35 @@ fun AccordionSettingsScreen(
 fun SmartVideoPlayer(
     streamUrl: String,
     userAgent: String?,
+    resizeMode: Int,
+    bufferMode: Int,
     reconnectingText: String,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     var isReconnecting by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val exoPlayer = remember { ExoPlayer.Builder(context).build().apply { playWhenReady = true } }
 
-    LaunchedEffect(streamUrl, userAgent) {
+    val exoPlayer = remember(bufferMode) {
+        val (minBuf, maxBuf, playBuf) = when (bufferMode) {
+            0 -> Triple(2000, 15000, 1000)
+            2 -> Triple(12000, 60000, 4000)
+            else -> Triple(5000, 30000, 2000)
+        }
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(minBuf, maxBuf, playBuf, 2000)
+            .build()
+        ExoPlayer.Builder(context).setLoadControl(loadControl).build().apply { playWhenReady = true }
+    }
+
+    LaunchedEffect(streamUrl, userAgent, exoPlayer) {
         if (streamUrl.isBlank()) return@LaunchedEffect
         isReconnecting = false
         val httpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(userAgent ?: "Lavf/60.3.100")
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(12000)
-            .setReadTimeoutMs(12000)
+            .setReadTimeoutMs(15000)
 
         val mediaSource = DefaultMediaSourceFactory(httpFactory).createMediaSource(MediaItem.fromUri(streamUrl))
         exoPlayer.setMediaSource(mediaSource)
@@ -1229,14 +1539,26 @@ fun SmartVideoPlayer(
         onDispose { exoPlayer.removeListener(listener); exoPlayer.release() }
     }
 
+    val aspectConst = when (resizeMode) {
+        1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+        2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+    }
+
     Box(modifier = modifier) {
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
                     player = exoPlayer
                     useController = true
+                    setShowSubtitleButton(true)
+                    this.resizeMode = aspectConst
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 }
+            },
+            update = { view ->
+                view.player = exoPlayer
+                view.resizeMode = aspectConst
             },
             modifier = Modifier.fillMaxSize()
         )
