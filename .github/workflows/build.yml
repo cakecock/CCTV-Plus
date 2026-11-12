@@ -28,18 +28,25 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Permanent Digital Signature (Keystore)
+      - name: Lock Permanent Digital Signature (Keystore)
         run: |
-          mkdir -p ~/.android
           if [ ! -f cctv_permanent.keystore ]; then
             keytool -genkeypair -v -keystore cctv_permanent.keystore \
               -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
               -storepass android -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US"
+              -dname "CN=CCTV Plus,O=Android,C=RU"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            for i in 1 2 3; do
+              git pull --rebase origin main || git pull --rebase origin master || true
+              git add cctv_permanent.keystore
+              git commit -m "Lock permanent keystore signature [skip ci]" || true
+              git push && break
+              sleep 2
+            done
           fi
-          cp cctv_permanent.keystore ~/.android/debug.keystore
 
-      - name: Prepare Root Gradle Configs and FileProvider XML
+      - name: Prepare Gradle Configs with Locked Signature
         run: |
           mkdir -p app/src/main/res/xml
           cat << 'EOF' > app/src/main/res/xml/file_paths.xml
@@ -80,6 +87,80 @@ jobs:
           org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           android.nonTransitiveRClass=true
+          EOF
+
+          cat << 'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.myiptv.app"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.myiptv.app"
+                  minSdk = 29
+                  targetSdk = 34
+                  versionCode = ${{ github.run_number }}
+                  versionName = "1.${{ github.run_number }}"
+              }
+
+              signingConfigs {
+                  getByName("debug") {
+                      storeFile = rootProject.file("cctv_permanent.keystore")
+                      storePassword = "android"
+                      keyAlias = "androiddebugkey"
+                      keyPassword = "android"
+                  }
+              }
+
+              buildTypes {
+                  debug {
+                      signingConfig = signingConfigs.getByName("debug")
+                  }
+                  release {
+                      isMinifyEnabled = false
+                      signingConfig = signingConfigs.getByName("debug")
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+
+              buildFeatures {
+                  compose = true
+              }
+
+              composeOptions {
+                  kotlinCompilerExtensionVersion = "1.5.14"
+              }
+          }
+
+          dependencies {
+              val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
+              implementation(composeBom)
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.activity:activity-compose:1.9.1")
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.material:material-icons-extended")
+              implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
+              implementation("androidx.media3:media3-exoplayer:1.4.0")
+              implementation("androidx.media3:media3-exoplayer-hls:1.4.0")
+              implementation("androidx.media3:media3-exoplayer-dash:1.4.0")
+              implementation("androidx.media3:media3-ui:1.4.0")
+              implementation("com.squareup.okhttp3:okhttp:4.12.0")
+              implementation("io.coil-kt:coil-compose:2.7.0")
+              implementation("com.google.zxing:core:3.5.3")
+          }
           EOF
 
       - name: Setup Gradle
