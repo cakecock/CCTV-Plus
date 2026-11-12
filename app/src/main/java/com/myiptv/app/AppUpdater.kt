@@ -38,7 +38,6 @@ object GitHubUpdater {
                 "$GITHUB_USER/MyIPTV"
             )
 
-            // Автоматически подтягиваем все публичные репозитории пользователя cakecock
             runCatching {
                 val userReposReq = Request.Builder()
                     .url("https://api.github.com/users/$GITHUB_USER/repos")
@@ -59,47 +58,62 @@ object GitHubUpdater {
             }
 
             var foundRelease: ReleaseInfo? = null
-            var lastHttpCode = 404
 
             for (repoFullName in candidateRepos.distinct()) {
-                val req = Request.Builder()
+                // Способ 1: Проверяем прямую выгрузку version.json в репозитории (работает всегда без 404!)
+                val directVerUrl = "https://raw.githubusercontent.com/$repoFullName/main/version.json"
+                val directReq = Request.Builder().url(directVerUrl).header("User-Agent", "CCTV-Plus-Updater").build()
+                runCatching {
+                    client.newCall(directReq).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val obj = JSONObject(resp.body?.string() ?: "{}")
+                            val tag = obj.optString("tag_name", "v1.latest")
+                            val apkUrl = "https://raw.githubusercontent.com/$repoFullName/main/CCTV-Plus.apk"
+                            foundRelease = ReleaseInfo(tag, apkUrl, "Прямое обновление из репозитория $repoFullName")
+                        }
+                    }
+                }
+                if (foundRelease != null) break
+
+                // Способ 2: Проверяем раздел Releases
+                val relReq = Request.Builder()
                     .url("https://api.github.com/repos/$repoFullName/releases/latest")
                     .header("Accept", "application/vnd.github+json")
                     .header("User-Agent", "CCTV-Plus-Updater")
                     .build()
 
-                client.newCall(req).execute().use { resp ->
-                    lastHttpCode = resp.code
-                    if (resp.isSuccessful) {
-                        val body = resp.body?.string() ?: "{}"
-                        val json = JSONObject(body)
-                        val tag = json.optString("tag_name", "v1.0")
-                        val notes = json.optString("body", "")
-                        val assets = json.optJSONArray("assets")
-                        var apkUrl = ""
-                        if (assets != null && assets.length() > 0) {
-                            apkUrl = assets.getJSONObject(0).optString("browser_download_url", "")
-                        }
-                        if (apkUrl.isNotEmpty()) {
-                            foundRelease = ReleaseInfo(tag, apkUrl, notes)
+                runCatching {
+                    client.newCall(relReq).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val json = JSONObject(resp.body?.string() ?: "{}")
+                            val tag = json.optString("tag_name", "v1.0")
+                            val notes = json.optString("body", "")
+                            val assets = json.optJSONArray("assets")
+                            val apkUrl = if (assets != null && assets.length() > 0) {
+                                assets.getJSONObject(0).optString("browser_download_url", "")
+                            } else ""
+                            if (apkUrl.isNotEmpty()) {
+                                foundRelease = ReleaseInfo(tag, apkUrl, notes)
+                            }
                         }
                     }
                 }
                 if (foundRelease != null) break
             }
 
-            foundRelease ?: throw IllegalStateException("Релиз не найден (HTTP $lastHttpCode)")
+            foundRelease ?: throw IllegalStateException("Сборка еще не опубликована роботом на GitHub. Подождите окончания сборки в Actions.")
         }
     }
 
     suspend fun downloadAndInstall(context: Context, downloadUrl: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            val req = Request.Builder().url(downloadUrl).build()
+            val req = Request.Builder().url(downloadUrl).header("User-Agent", "CCTV-Plus-Updater").build()
             val outDir = context.getExternalFilesDir(null) ?: context.cacheDir
             val apkFile = File(outDir, "CCTV-Plus-Update.apk")
             if (apkFile.exists()) apkFile.delete()
 
             client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
                 val inStream = resp.body?.byteStream() ?: throw IllegalStateException("Empty APK stream")
                 FileOutputStream(apkFile).use { outStream ->
                     inStream.copyTo(outStream)
