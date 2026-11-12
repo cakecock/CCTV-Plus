@@ -22,6 +22,7 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.URLDecoder
 import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
@@ -30,7 +31,7 @@ import kotlin.concurrent.thread
 object NetworkLoader {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
         .followSslRedirects(true)
         .build()
@@ -72,6 +73,8 @@ object NetworkLoader {
                 var logo: String? = null
                 var epgId: String? = null
                 var ua: String? = null
+                var catchupDays = 3
+                var catchupSource: String? = null
                 var num = 1
 
                 while (reader.readLine().also { line = it } != null) {
@@ -88,16 +91,24 @@ object NetworkLoader {
                             logo = attrs["tvg-logo"]
                             epgId = attrs["tvg-id"] ?: attrs["tvg-name"]
                             group = attrs["group-title"]?.takeIf { it.isNotBlank() } ?: group
+                            catchupDays = attrs["catchup-days"]?.toIntOrNull()
+                                ?: attrs["tvg-rec"]?.toIntOrNull()
+                                ?: attrs["timeshift"]?.toIntOrNull()
+                                ?: 3
+                            catchupSource = attrs["catchup-source"]
                         }
                         t.startsWith("#EXTGRP:") -> group = t.substringAfter("#EXTGRP:").trim()
                         t.startsWith("#EXTVLCOPT:http-user-agent=") -> ua = t.substringAfter("=").trim()
                         !t.startsWith("#") -> {
                             if (name.isNotEmpty()) {
                                 val isVod = t.endsWith(".mp4", true) || t.endsWith(".mkv", true) || t.endsWith(".avi", true)
-                                if (isVod) movies.add(VodMovie("m3u_vod_$num", name, group, logo, "", "", "", t))
-                                else channels.add(Channel("ch_$num", num, name, group, logo, t, epgId, ua))
+                                if (isVod) {
+                                    movies.add(VodMovie("m3u_vod_$num", name, group, logo, "", "", "", t))
+                                } else {
+                                    channels.add(Channel("ch_$num", num, name, group, logo, t, epgId, ua, catchupDays, catchupSource))
+                                }
                                 num++
-                                name = ""; logo = null; epgId = null; ua = null
+                                name = ""; logo = null; epgId = null; ua = null; catchupDays = 3; catchupSource = null
                             }
                         }
                     }
@@ -263,62 +274,16 @@ object NetworkLoader {
                 }
 
                 if (directStream.isNotEmpty()) {
-                    out.add(
-                        VodMovie(
-                            id = "vp_media_${i}_${System.nanoTime()}",
-                            title = title,
-                            category = "Видео",
-                            posterUrl = poster.ifEmpty { null },
-                            description = desc,
-                            year = year,
-                            rating = rating,
-                            streamUrl = directStream,
-                            isFolder = false,
-                            requestPayloadJson = mergedReq.toString(),
-                            targetApiUrl = rootUrl
-                        )
-                    )
+                    out.add(VodMovie("vp_media_${i}_${System.nanoTime()}", title, "Видео", poster.ifEmpty { null }, desc, year, rating, directStream, false, mergedReq.toString(), rootUrl))
                 } else {
-                    out.add(
-                        VodMovie(
-                            id = "vp_node_${i}_${System.nanoTime()}",
-                            title = title,
-                            category = if (itemType == "category") "Категория" else "Папка / Серия",
-                            posterUrl = poster.ifEmpty { null },
-                            description = desc,
-                            year = year,
-                            rating = rating,
-                            streamUrl = "",
-                            isFolder = true,
-                            requestPayloadJson = mergedReq.toString(),
-                            targetApiUrl = rootUrl
-                        )
-                    )
+                    out.add(VodMovie("vp_node_${i}_${System.nanoTime()}", title, if (itemType == "category") "Категория" else "Папка / Серия", poster.ifEmpty { null }, desc, year, rating, "", true, mergedReq.toString(), rootUrl))
                 }
             }
 
-            // Если в массиве items ничего не нашлось, вытаскиваем все прямые ссылки на видео из текста ответа
             if (out.isEmpty()) {
-                val mediaUrls = urlExtractRegex.findAll(cleanBody)
-                    .map { it.groupValues[1] }
-                    .filter { !isPortalOrImageUrl(it, baseUrl) }
-                    .distinct()
-                    .toList()
-
+                val mediaUrls = urlExtractRegex.findAll(cleanBody).map { it.groupValues[1] }.filter { !isPortalOrImageUrl(it, baseUrl) }.distinct().toList()
                 mediaUrls.forEachIndexed { idx, sUrl ->
-                    out.add(
-                        VodMovie(
-                            id = "vp_auto_$idx",
-                            title = if (mediaUrls.size == 1) "▶ Воспроизвести" else "▶ Поток #${idx + 1}",
-                            category = "Видео",
-                            posterUrl = null,
-                            description = "",
-                            year = "",
-                            rating = "",
-                            streamUrl = sUrl,
-                            isFolder = false
-                        )
-                    )
+                    out.add(VodMovie("vp_auto_$idx", if (mediaUrls.size == 1) "▶ Воспроизвести" else "▶ Поток #${idx + 1}", "Видео", null, "", "", "", sUrl, false))
                 }
             }
 
@@ -328,22 +293,7 @@ object NetworkLoader {
                 val curLimit = nextReq.optInt("limit", PAGE_SIZE).coerceAtLeast(20)
                 nextReq.put("offset", curOffset + curLimit)
                 nextReq.put("limit", curLimit)
-
-                out.add(
-                    VodMovie(
-                        id = "vp_next_${curOffset + curLimit}",
-                        title = "➡️ Ещё +$curLimit",
-                        category = "Навигация",
-                        posterUrl = null,
-                        description = "",
-                        year = "",
-                        rating = "",
-                        streamUrl = "",
-                        isFolder = true,
-                        requestPayloadJson = nextReq.toString(),
-                        targetApiUrl = rootUrl
-                    )
-                )
+                out.add(VodMovie("vp_next_${curOffset + curLimit}", "➡️ Ещё +$curLimit", "Навигация", null, "", "", "", "", true, nextReq.toString(), rootUrl))
             }
         }
     }
@@ -390,10 +340,24 @@ object NetworkLoader {
         list
     }
 
-    suspend fun loadEpgCurrentPrograms(epgUrl: String): Map<String, String> = withContext(Dispatchers.IO) {
-        val result = mutableMapOf<String, String>()
+    // Полная загрузка EPG: связывает каналы и по ID, и по названию (<display-name>) + собирает расписание для Архива
+    suspend fun loadFullEpgSchedule(epgUrl: String): Map<String, List<EpgProgramItem>> = withContext(Dispatchers.IO) {
+        val rawById = mutableMapOf<String, MutableList<EpgProgramItem>>()
+        val displayNameToId = mutableMapOf<String, String>()
         val nowMs = System.currentTimeMillis()
-        val sdf = SimpleDateFormat("yyyyMMddHHmmss Z", Locale.US)
+        val windowStart = nowMs - 48L * 3600L * 1000L // 2 дня назад (для Архива)
+        val windowEnd = nowMs + 24L * 3600L * 1000L   // 1 день вперед
+        val sdfWithTz = SimpleDateFormat("yyyyMMddHHmmss Z", Locale.US)
+        val sdfNoTz = SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
+        val timeFmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
+        val shortTimeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+        fun parseXmlTime(raw: String?): Long {
+            if (raw.isNullOrBlank()) return 0L
+            return runCatching { sdfWithTz.parse(raw.trim())?.time ?: 0L }.getOrElse {
+                runCatching { sdfNoTz.parse(raw.trim().take(14))?.time ?: 0L }.getOrDefault(0L)
+            }
+        }
 
         runCatching {
             val req = Request.Builder().url(epgUrl).header("User-Agent", "Mozilla/5.0").build()
@@ -404,41 +368,72 @@ object NetworkLoader {
                 parser.setInput(inputStream, "UTF-8")
 
                 var eventType = parser.eventType
-                var currentChannelId: String? = null
-                var isCurrentTimeMatch = false
-                var insideTitle = false
-                var count = 0
+                var curChannelTagId: String? = null
+                var insideDisplayName = false
 
-                while (eventType != XmlPullParser.END_DOCUMENT && count < 6000) {
+                var progChannelId: String? = null
+                var progStart = 0L
+                var progStop = 0L
+                var insideTitle = false
+                var totalSaved = 0
+
+                while (eventType != XmlPullParser.END_DOCUMENT && totalSaved < 35000) {
                     when (eventType) {
                         XmlPullParser.START_TAG -> {
-                            if (parser.name == "programme") {
-                                currentChannelId = parser.getAttributeValue(null, "channel")
-                                val startStr = parser.getAttributeValue(null, "start")
-                                val stopStr = parser.getAttributeValue(null, "stop")
-                                isCurrentTimeMatch = runCatching {
-                                    val s = sdf.parse(startStr ?: "")?.time ?: 0L
-                                    val e = sdf.parse(stopStr ?: "")?.time ?: Long.MAX_VALUE
-                                    nowMs in s..e
-                                }.getOrDefault(false)
-                            } else if (parser.name == "title" && currentChannelId != null) insideTitle = true
+                            when (parser.name) {
+                                "channel" -> curChannelTagId = parser.getAttributeValue(null, "id")
+                                "display-name" -> if (curChannelTagId != null) insideDisplayName = true
+                                "programme" -> {
+                                    progChannelId = parser.getAttributeValue(null, "channel")
+                                    progStart = parseXmlTime(parser.getAttributeValue(null, "start"))
+                                    progStop = parseXmlTime(parser.getAttributeValue(null, "stop"))
+                                }
+                                "title" -> if (progChannelId != null && progStop in windowStart..windowEnd) {
+                                    insideTitle = true
+                                }
+                            }
                         }
                         XmlPullParser.TEXT -> {
-                            if (insideTitle && currentChannelId != null) {
-                                if (isCurrentTimeMatch || !result.containsKey(currentChannelId!!)) {
-                                    result[currentChannelId!!] = parser.text
-                                    if (isCurrentTimeMatch) count++
+                            if (insideDisplayName && curChannelTagId != null) {
+                                val dName = parser.text.trim().lowercase()
+                                if (dName.isNotEmpty()) displayNameToId[dName] = curChannelTagId!!
+                                insideDisplayName = false
+                            } else if (insideTitle && progChannelId != null) {
+                                val title = parser.text.trim()
+                                val list = rawById.getOrPut(progChannelId!!) { mutableListOf() }
+                                if (list.size < 45) {
+                                    val tLabel = "${timeFmt.format(Date(progStart))} - ${shortTimeFmt.format(Date(progStop))}"
+                                    list.add(EpgProgramItem(title, progStart, progStop, tLabel))
+                                    totalSaved++
                                 }
                                 insideTitle = false
                             }
                         }
-                        XmlPullParser.END_TAG -> if (parser.name == "programme") { currentChannelId = null; insideTitle = false }
+                        XmlPullParser.END_TAG -> {
+                            when (parser.name) {
+                                "channel" -> { curChannelTagId = null; insideDisplayName = false }
+                                "programme" -> { progChannelId = null; insideTitle = false }
+                            }
+                        }
                     }
                     eventType = parser.next()
                 }
             }
         }
-        result
+
+        // Создаем итоговую карту, где программы доступны и по ID, и по названию канала в нижнем регистре
+        val finalMap = mutableMapOf<String, List<EpgProgramItem>>()
+        rawById.forEach { (id, list) ->
+            val sorted = list.sortedBy { it.startMs }
+            finalMap[id] = sorted
+            finalMap[id.lowercase()] = sorted
+        }
+        displayNameToId.forEach { (dName, id) ->
+            rawById[id]?.let { list ->
+                finalMap[dName] = list.sortedBy { it.startMs }
+            }
+        }
+        finalMap
     }
 }
 
