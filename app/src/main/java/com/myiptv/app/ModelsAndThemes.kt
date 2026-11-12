@@ -38,6 +38,62 @@ data class M3uParseResult(
     val embeddedEpgUrl: String?
 )
 
+data class ChangelogRelease(
+    val version: String,
+    val date: String,
+    val changesRu: List<String>,
+    val changesEn: List<String>
+)
+
+val AppChangelogHistory = listOf(
+    ChangelogRelease(
+        version = "v1.22 (Текущая)",
+        date = "12.11.2026",
+        changesRu = listOf(
+            "📊 Добавлена полоска состояния и точный процент скачивания обновлений (0% - 100% + МБ).",
+            "🎬 Исправлен запуск серий и фильмов в VPortal (глубокий сканер видеопотоков).",
+            "💾 Добавлено меню «Импорт и Экспорт настроек» (файл .json и буфер обмена).",
+            "📜 Добавлено меню «Список изменений (Changelog)».",
+            "🛡 Переход на чистовую сборку Release (V1+V2) для снижения срабатываний Play Защиты."
+        ),
+        changesEn = listOf(
+            "📊 Added real-time progress bar and percentage (0% - 100% + MB) for updates.",
+            "🎬 Fixed episode & movie playback in VPortal with deep stream scanner.",
+            "💾 Added Backup Import & Export menu (.json file and clipboard).",
+            "📜 Added in-app Changelog menu in Settings.",
+            "🛡 Switched to signed Release build (V1+V2)."
+        )
+    ),
+    ChangelogRelease(
+        version = "v1.20",
+        date = "12.11.2026",
+        changesRu = listOf(
+            "♾ Бесконечная автоподгрузка (+50 фильмов) при прокрутке Кинозала до конца.",
+            "📅 Добавлена полоска загрузки и статус обновления EPG в Настройках.",
+            "⭐ Категория «Избранное» перенесена внутрь полоски категорий телеканалов."
+        ),
+        changesEn = listOf(
+            "♾ Infinite auto-scroll pagination (+50 movies) in VPortal VOD.",
+            "📅 Added EPG loading progress bar and status in Settings.",
+            "⭐ Moved Favorites into the dynamic channel categories bar."
+        )
+    ),
+    ChangelogRelease(
+        version = "v1.16",
+        date = "12.11.2026",
+        changesRu = listOf(
+            "🎬 Полная поддержка протокола POST JSON для VPortal (TVlider / iLook).",
+            "🗂 Переработка экрана Настроек в виде разворачивающихся строчек.",
+            "🔄 Встроенная система автообновления напрямую с GitHub."
+        ),
+        changesEn = listOf(
+            "🎬 Full POST JSON protocol support for VPortal.",
+            "🗂 Redesigned Settings with expandable accordion rows.",
+            "🔄 Built-in GitHub auto-updater."
+        )
+    )
+)
+
 enum class AppThemePalette(
     val id: String,
     val titleRu: String,
@@ -128,6 +184,8 @@ data class Strings(
     val catEpg: String,
     val catPortals: String,
     val catQr: String,
+    val catBackup: String,
+    val catChangelog: String,
     val activePlaylistLabel: String,
     val activeEpgLabel: String,
     val epgFromPlaylistOption: String,
@@ -158,6 +216,8 @@ val RuStrings = Strings(
     catEpg = "📅 Телепрограмма (EPG)",
     catPortals = "🎬 Порталы (VPortal и Stalker)",
     catQr = "📱 QR-Пульт (Ввод с телефона)",
+    catBackup = "💾 Импорт и Экспорт настроек",
+    catChangelog = "📜 Список изменений (Changelog)",
     activePlaylistLabel = "Активный плейлист:",
     activeEpgLabel = "Активный источник EPG:",
     epgFromPlaylistOption = "🔄 Автоматически из плейлиста (url-tvg)",
@@ -188,6 +248,8 @@ val EnStrings = Strings(
     catEpg = "📅 TV Guide (EPG)",
     catPortals = "🎬 Portals (VPortal & Stalker)",
     catQr = "📱 QR Remote Loader",
+    catBackup = "💾 Backup (Import & Export)",
+    catChangelog = "📜 Changelog (What's New)",
     activePlaylistLabel = "Active Playlist:",
     activeEpgLabel = "Active EPG Source:",
     epgFromPlaylistOption = "🔄 Auto from Playlist (url-tvg)",
@@ -232,3 +294,48 @@ fun saveNamedList(prefs: SharedPreferences, jsonKey: String, list: List<NamedSou
     }
     prefs.edit().putString(jsonKey, arr.toString()).apply()
 }
+
+fun exportAllSettingsToJson(prefs: SharedPreferences): String {
+    val root = JSONObject()
+    root.put("app", "CCTV Plus")
+    root.put("lang", prefs.getString("lang", "ru"))
+    root.put("theme_id", prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
+    root.put("playlists_json", prefs.getString("playlists_json", "[]"))
+    root.put("selected_playlist_id", prefs.getString("selected_playlist_id", ""))
+    root.put("epgs_json", prefs.getString("epgs_json", "[]"))
+    root.put("selected_epg_id", prefs.getString("selected_epg_id", "AUTO_PLAYLIST"))
+    root.put("use_playlist_epg", prefs.getBoolean("use_playlist_epg", true))
+    root.put("vportal_url", prefs.getString("vportal_url", ""))
+    root.put("stalker_url", prefs.getString("stalker_url", ""))
+    root.put("stalker_mac", prefs.getString("stalker_mac", ""))
+    val favArr = JSONArray()
+    prefs.getStringSet("favs", emptySet())?.forEach { favArr.put(it) }
+    root.put("favs", favArr)
+    return root.toString(2)
+}
+
+fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolean = runCatching {
+    val root = JSONObject(jsonStr.trim())
+    val favSet = mutableSetOf<String>()
+    val favArr = root.optJSONArray("favs")
+    if (favArr != null) {
+        for (i in 0 until favArr.length()) {
+            favSet.add(favArr.getString(i))
+        }
+    }
+    prefs.edit()
+        .putBoolean("lang_selected", true)
+        .putString("lang", root.optString("lang", "ru"))
+        .putString("theme_id", root.optString("theme_id", AppThemePalette.DARK_EMERALD.id))
+        .putString("playlists_json", root.optString("playlists_json", "[]"))
+        .putString("selected_playlist_id", root.optString("selected_playlist_id", ""))
+        .putString("epgs_json", root.optString("epgs_json", "[]"))
+        .putString("selected_epg_id", root.optString("selected_epg_id", "AUTO_PLAYLIST"))
+        .putBoolean("use_playlist_epg", root.optBoolean("use_playlist_epg", true))
+        .putString("vportal_url", root.optString("vportal_url", ""))
+        .putString("stalker_url", root.optString("stalker_url", ""))
+        .putString("stalker_mac", root.optString("stalker_mac", ""))
+        .putStringSet("favs", favSet)
+        .apply()
+    true
+}.getOrDefault(false)
