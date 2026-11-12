@@ -32,7 +32,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -62,15 +61,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
-data class AudioTrackOption(val groupIndex: Int, val trackIndex: Int, val label: String, val isSelected: Boolean)
-data class VideoQualityOption(val groupIndex: Int, val trackIndex: Int, val label: String, val height: Int, val isSelected: Boolean)
-
-@Composable
-fun Modifier.tvFocusBorder(accentColor: Color, shape: RoundedCornerShape = RoundedCornerShape(12.dp)): Modifier {
-    var isFocused by remember { mutableStateOf(false) }
-    return this.onFocusChanged { isFocused = it.isFocused }
-        .border(if (isFocused) 2.5.dp else 0.dp, if (isFocused) accentColor else Color.Transparent, shape)
-}
+data class AudioTrackOption(
+    val groupIndex: Int,
+    val trackIndex: Int,
+    val label: String,
+    val isSelected: Boolean
+)
 
 fun launchExternalVideoPlayer(context: Context, streamUrl: String, title: String) {
     if (streamUrl.isBlank()) return
@@ -101,34 +97,35 @@ fun SmartVideoPlayer(
     seekCommand: Pair<Int, Long>? = null,
     showAudioSelectorDialog: Boolean = false,
     onDismissAudioSelector: () -> Unit = {},
-    showQualitySelectorDialog: Boolean = false,
-    onDismissQualitySelector: () -> Unit = {},
     onVideoQualityDetected: (String) -> Unit = {},
     onPlaybackProgress: (posMs: Long, durMs: Long) -> Unit = { _, _ -> }
 ) {
-    var resolvedUrl by remember(streamUrl) {
-        mutableStateOf(if (streamUrl.startsWith("stalker_cmd:::") || streamUrl.startsWith("stalker_vod:::")) "" else streamUrl)
-    }
-
-    LaunchedEffect(streamUrl) {
-        if (streamUrl.startsWith("stalker_cmd:::") || streamUrl.startsWith("stalker_vod:::")) {
-            resolvedUrl = NetworkLoader.resolveStalkerStreamIfNeeded(streamUrl)
-        } else {
-            resolvedUrl = streamUrl
-        }
-    }
-
     if (playerEngine == 1) {
-        NativeAndroidVideoPlayer(resolvedUrl, useNativeController, isMuted, reconnectingText, modifier)
+        NativeAndroidVideoPlayer(
+            streamUrl = streamUrl,
+            useNativeController = useNativeController,
+            isMuted = isMuted,
+            reconnectingText = reconnectingText,
+            modifier = modifier
+        )
     } else {
         ExoVideoPlayer(
-            streamUrl = resolvedUrl, userAgent = userAgent, resizeMode = resizeMode, bufferMode = bufferMode,
-            useNativeController = useNativeController, reconnectingText = reconnectingText, modifier = modifier,
-            isMuted = isMuted, enableSwipeGestures = enableSwipeGestures, playbackSpeed = playbackSpeed,
-            initialSeekMs = initialSeekMs, seekCommand = seekCommand,
-            showAudioSelectorDialog = showAudioSelectorDialog, onDismissAudioSelector = onDismissAudioSelector,
-            showQualitySelectorDialog = showQualitySelectorDialog, onDismissQualitySelector = onDismissQualitySelector,
-            onVideoQualityDetected = onVideoQualityDetected, onPlaybackProgress = onPlaybackProgress
+            streamUrl = streamUrl,
+            userAgent = userAgent,
+            resizeMode = resizeMode,
+            bufferMode = bufferMode,
+            useNativeController = useNativeController,
+            reconnectingText = reconnectingText,
+            modifier = modifier,
+            isMuted = isMuted,
+            enableSwipeGestures = enableSwipeGestures,
+            playbackSpeed = playbackSpeed,
+            initialSeekMs = initialSeekMs,
+            seekCommand = seekCommand,
+            showAudioSelectorDialog = showAudioSelectorDialog,
+            onDismissAudioSelector = onDismissAudioSelector,
+            onVideoQualityDetected = onVideoQualityDetected,
+            onPlaybackProgress = onPlaybackProgress
         )
     }
 }
@@ -142,6 +139,11 @@ fun NativeAndroidVideoPlayer(
     modifier: Modifier = Modifier
 ) {
     var hasError by remember(streamUrl) { mutableStateOf(false) }
+    var resolvedUrl by remember(streamUrl) { mutableStateOf("") }
+
+    LaunchedEffect(streamUrl) {
+        resolvedUrl = if (streamUrl.isNotBlank()) NetworkLoader.resolveStalkerStreamIfNeeded(streamUrl) else ""
+    }
 
     Box(modifier = modifier.background(Color.Black)) {
         AndroidView(
@@ -150,16 +152,24 @@ fun NativeAndroidVideoPlayer(
                     keepScreenOn = true
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     if (useNativeController) {
-                        val mc = MediaController(ctx); mc.setAnchorView(this); setMediaController(mc)
+                        val mc = MediaController(ctx)
+                        mc.setAnchorView(this)
+                        setMediaController(mc)
                     }
                 }
             },
             update = { view ->
-                if (streamUrl.isNotBlank() && view.tag != streamUrl) {
-                    view.tag = streamUrl; hasError = false
-                    view.setOnPreparedListener { mp -> val vol = if (isMuted) 0f else 1f; mp.setVolume(vol, vol); mp.start() }
+                view.keepScreenOn = true
+                if (resolvedUrl.isNotBlank() && view.tag != resolvedUrl) {
+                    view.tag = resolvedUrl
+                    hasError = false
+                    view.setOnPreparedListener { mp ->
+                        val vol = if (isMuted) 0f else 1f
+                        mp.setVolume(vol, vol)
+                        mp.start()
+                    }
                     view.setOnErrorListener { _, _, _ -> hasError = true; true }
-                    view.setVideoURI(Uri.parse(streamUrl))
+                    view.setVideoURI(Uri.parse(resolvedUrl))
                 }
             },
             modifier = Modifier.fillMaxSize()
@@ -188,8 +198,6 @@ fun ExoVideoPlayer(
     seekCommand: Pair<Int, Long>? = null,
     showAudioSelectorDialog: Boolean = false,
     onDismissAudioSelector: () -> Unit = {},
-    showQualitySelectorDialog: Boolean = false,
-    onDismissQualitySelector: () -> Unit = {},
     onVideoQualityDetected: (String) -> Unit = {},
     onPlaybackProgress: (posMs: Long, durMs: Long) -> Unit = { _, _ -> }
 ) {
@@ -197,7 +205,6 @@ fun ExoVideoPlayer(
     var isReconnecting by remember { mutableStateOf(false) }
     var gestureHudText by remember { mutableStateOf("") }
     var audioTracks by remember { mutableStateOf<List<AudioTrackOption>>(emptyList()) }
-    var videoQualityTracks by remember { mutableStateOf<List<VideoQualityOption>>(emptyList()) }
     var didInitialSeek by remember(streamUrl, initialSeekMs) { mutableStateOf(false) }
     var detectedRes by remember(streamUrl) { mutableStateOf("") }
     var detectedFps by remember(streamUrl) { mutableStateOf("") }
@@ -207,33 +214,54 @@ fun ExoVideoPlayer(
 
     val exoPlayer = remember(bufferMode) {
         val (minBuf, maxBuf, playBuf) = when (bufferMode) {
-            0 -> Triple(2000, 15000, 1000); 2 -> Triple(12000, 60000, 4000); else -> Triple(5000, 30000, 2000)
+            0 -> Triple(2000, 15000, 1000)
+            2 -> Triple(12000, 60000, 4000)
+            else -> Triple(5000, 30000, 2000)
         }
-        val loadControl = DefaultLoadControl.Builder().setBufferDurationsMs(minBuf, maxBuf, playBuf, 2000).build()
-        // Включаем встроенный декодер FFmpeg (AC3 / EAC3 / DTS / TrueHD)!
-        val renderersFactory = DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-        ExoPlayer.Builder(context, renderersFactory).setLoadControl(loadControl).build().apply { playWhenReady = true }
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(minBuf, maxBuf, playBuf, 2000)
+            .build()
+        // Включаем встроенный декодер FFmpeg для AC3 / EAC3 / DTS
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        ExoPlayer.Builder(context, renderersFactory)
+            .setLoadControl(loadControl)
+            .build()
+            .apply { playWhenReady = true }
     }
 
     LaunchedEffect(isMuted, exoPlayer) { exoPlayer.volume = if (isMuted) 0f else 1f }
     LaunchedEffect(playbackSpeed, exoPlayer) { exoPlayer.setPlaybackSpeed(playbackSpeed) }
     LaunchedEffect(seekCommand) {
-        if (seekCommand != null) exoPlayer.seekTo((exoPlayer.currentPosition + seekCommand.second).coerceAtLeast(0L))
+        if (seekCommand != null) {
+            exoPlayer.seekTo((exoPlayer.currentPosition + seekCommand.second).coerceAtLeast(0L))
+        }
     }
 
     LaunchedEffect(streamUrl, userAgent, exoPlayer) {
         if (streamUrl.isBlank()) return@LaunchedEffect
-        isReconnecting = false; curOnQuality("")
-        val httpFactory = DefaultHttpDataSource.Factory().setUserAgent(userAgent ?: "Lavf/60.3.100")
-            .setAllowCrossProtocolRedirects(true).setConnectTimeoutMs(12000).setReadTimeoutMs(15000)
-        exoPlayer.setMediaSource(DefaultMediaSourceFactory(httpFactory).createMediaSource(MediaItem.fromUri(streamUrl)))
-        exoPlayer.prepare(); exoPlayer.playWhenReady = true
+        isReconnecting = false
+        curOnQuality("")
+        val realUrl = NetworkLoader.resolveStalkerStreamIfNeeded(streamUrl)
+        if (realUrl.isBlank()) return@LaunchedEffect
+
+        val httpFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent(userAgent ?: "Lavf/60.3.100")
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(12000)
+            .setReadTimeoutMs(15000)
+
+        val mediaSource = DefaultMediaSourceFactory(httpFactory).createMediaSource(MediaItem.fromUri(realUrl))
+        exoPlayer.setMediaSource(mediaSource)
+        exoPlayer.prepare()
+        exoPlayer.playWhenReady = true
     }
 
     LaunchedEffect(exoPlayer, streamUrl) {
         while (true) {
             delay(4000L)
-            val dur = exoPlayer.duration; val pos = exoPlayer.currentPosition
+            val dur = exoPlayer.duration
+            val pos = exoPlayer.currentPosition
             if (dur > 30000L && pos > 5000L) curOnProgress(pos, dur)
         }
     }
@@ -247,7 +275,9 @@ fun ExoVideoPlayer(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     isReconnecting = false
-                    if (!didInitialSeek && initialSeekMs > 5000L) { didInitialSeek = true; exoPlayer.seekTo(initialSeekMs) }
+                    if (!didInitialSeek && initialSeekMs > 5000L) {
+                        didInitialSeek = true; exoPlayer.seekTo(initialSeekMs)
+                    }
                 }
             }
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -258,38 +288,25 @@ fun ExoVideoPlayer(
                 }
             }
             override fun onTracksChanged(tracks: Tracks) {
-                val aList = mutableListOf<AudioTrackOption>()
-                val vList = mutableListOf<VideoQualityOption>()
+                val list = mutableListOf<AudioTrackOption>()
                 tracks.groups.forEachIndexed { gIdx, group ->
                     if (group.type == C.TRACK_TYPE_AUDIO) {
                         for (tIdx in 0 until group.length) {
                             val fmt = group.getTrackFormat(tIdx)
                             val title = listOf(fmt.label ?: "", fmt.language?.uppercase() ?: "", if (fmt.channelCount > 0) "${fmt.channelCount}ch" else "")
-                                .filter { it.isNotBlank() }.joinToString(" • ").ifEmpty { "Дорожка #${aList.size + 1}" }
-                            aList.add(AudioTrackOption(gIdx, tIdx, title, group.isTrackSelected(tIdx)))
+                                .filter { it.isNotBlank() }.joinToString(" • ").ifEmpty { "Дорожка #${list.size + 1}" }
+                            list.add(AudioTrackOption(gIdx, tIdx, title, group.isTrackSelected(tIdx)))
                         }
-                    } else if (group.type == C.TRACK_TYPE_VIDEO) {
-                        for (tIdx in 0 until group.length) {
-                            val fmt = group.getTrackFormat(tIdx)
-                            if (fmt.height > 0) {
-                                val resStr = if (fmt.height >= 2100) "4K (${fmt.height}p)" else "${fmt.height}p"
-                                val brStr = if (fmt.bitrate > 0) String.format(java.util.Locale.US, "%.1f Мбит/с", fmt.bitrate / 1_000_000f) else ""
-                                val lbl = listOf(resStr, brStr).filter { it.isNotBlank() }.joinToString(" • ")
-                                vList.add(VideoQualityOption(gIdx, tIdx, lbl, fmt.height, group.isTrackSelected(tIdx)))
-                            }
-                        }
-                        if (group.length > 0) {
-                            val fps = group.getTrackFormat(0).frameRate
-                            if (fps > 1f) {
-                                detectedFps = "${fps.roundToInt()}fps"
-                                val combined = listOf(detectedRes, detectedFps).filter { it.isNotBlank() }.joinToString(" • ")
-                                if (combined.isNotBlank()) curOnQuality(combined)
-                            }
+                    } else if (group.type == C.TRACK_TYPE_VIDEO && group.length > 0) {
+                        val fps = group.getTrackFormat(0).frameRate
+                        if (fps > 1f) {
+                            detectedFps = "${fps.roundToInt()}fps"
+                            val combined = listOf(detectedRes, detectedFps).filter { it.isNotBlank() }.joinToString(" • ")
+                            if (combined.isNotBlank()) curOnQuality(combined)
                         }
                     }
                 }
-                audioTracks = aList
-                videoQualityTracks = vList.sortedByDescending { it.height }
+                audioTracks = list
             }
         }
         exoPlayer.addListener(listener)
@@ -301,21 +318,26 @@ fun ExoVideoPlayer(
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1C2026)), shape = RoundedCornerShape(16.dp)) {
                 Column(modifier = Modifier.padding(16.dp).widthIn(min = 260.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("🔊 Выбор звуковой дорожки", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color(0xFF10B981))
-                    if (audioTracks.isEmpty()) Text("Другие звуковые дорожки не найдены", fontSize = 13.sp, color = Color.LightGray)
-                    else audioTracks.forEach { opt ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (opt.isSelected) Color(0xFF19322B) else Color(0xFF121417))
-                                .clickable {
-                                    exoPlayer.currentTracks.groups.getOrNull(opt.groupIndex)?.let { grp ->
-                                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
-                                            .setOverrideForType(TrackSelectionOverride(grp.mediaTrackGroup, opt.trackIndex)).build()
-                                    }
-                                    onDismissAudioSelector()
-                                }.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(opt.label, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            if (opt.isSelected) Icon(Icons.Default.Check, null, tint = Color(0xFF10B981))
+                    if (audioTracks.isEmpty()) {
+                        Text("Дополнительные звуковые дорожки не найдены", fontSize = 13.sp, color = Color.LightGray)
+                    } else {
+                        audioTracks.forEach { opt ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                                    .background(if (opt.isSelected) Color(0xFF19322B) else Color(0xFF121417))
+                                    .clickable {
+                                        exoPlayer.currentTracks.groups.getOrNull(opt.groupIndex)?.let { grp ->
+                                            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                                                .buildUpon().setOverrideForType(TrackSelectionOverride(grp.mediaTrackGroup, opt.trackIndex)).build()
+                                        }
+                                        onDismissAudioSelector()
+                                    }.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(opt.label, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                if (opt.isSelected) Icon(Icons.Default.Check, null, tint = Color(0xFF10B981))
+                            }
                         }
                     }
                     TextButton(onClick = onDismissAudioSelector, modifier = Modifier.align(Alignment.End)) { Text("Закрыть", color = Color.White) }
@@ -324,57 +346,25 @@ fun ExoVideoPlayer(
         }
     }
 
-    if (showQualitySelectorDialog) {
-        Dialog(onDismissRequest = onDismissQualitySelector) {
-            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1C2026)), shape = RoundedCornerShape(16.dp)) {
-                Column(modifier = Modifier.padding(16.dp).widthIn(min = 260.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("🎞 Качество видео", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color(0xFF10B981))
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0xFF121417))
-                            .clickable {
-                                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO).build()
-                                onDismissQualitySelector()
-                            }.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("🔄 Авто (Максимальное / По сети)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    }
-                    if (videoQualityTracks.isEmpty()) Text("У этого потока фиксированное качество", fontSize = 12.sp, color = Color.LightGray)
-                    else videoQualityTracks.forEach { opt ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (opt.isSelected) Color(0xFF19322B) else Color(0xFF121417))
-                                .clickable {
-                                    exoPlayer.currentTracks.groups.getOrNull(opt.groupIndex)?.let { grp ->
-                                        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
-                                            .setOverrideForType(TrackSelectionOverride(grp.mediaTrackGroup, opt.trackIndex)).build()
-                                    }
-                                    onDismissQualitySelector()
-                                }.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(opt.label, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            if (opt.isSelected) Icon(Icons.Default.Check, null, tint = Color(0xFF10B981))
-                        }
-                    }
-                    TextButton(onClick = onDismissQualitySelector, modifier = Modifier.align(Alignment.End)) { Text("Закрыть", color = Color.White) }
-                }
-            }
-        }
-    }
-
     val aspectConst = when (resizeMode) {
-        1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL; 2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM; else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+        1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+        2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
     }
 
     Box(
         modifier = modifier.pointerInput(enableSwipeGestures) {
             if (!enableSwipeGestures) return@pointerInput
             detectVerticalDragGestures(
-                onDragEnd = { gestureHudText = "" }, onDragCancel = { gestureHudText = "" },
+                onDragEnd = { gestureHudText = "" },
+                onDragCancel = { gestureHudText = "" },
                 onVerticalDrag = { change, dragAmount ->
-                    val w = size.width.coerceAtLeast(1); val isLeft = change.position.x < w / 2f; val delta = -dragAmount / 550f
+                    val w = size.width.coerceAtLeast(1)
+                    val isLeft = change.position.x < w / 2f
+                    val delta = -dragAmount / 550f
                     if (isLeft) {
-                        (context as? Activity)?.window?.let { win ->
+                        val win = (context as? Activity)?.window
+                        if (win != null) {
                             val cur = win.attributes.screenBrightness.let { if (it < 0f) 0.5f else it }
                             val next = (cur + delta).coerceIn(0.05f, 1.0f)
                             val lp = win.attributes; lp.screenBrightness = next; win.attributes = lp
@@ -395,12 +385,15 @@ fun ExoVideoPlayer(
         AndroidView(
             factory = { ctx ->
                 PlayerView(ctx).apply {
-                    keepScreenOn = true; player = exoPlayer; useController = useNativeController; setShowSubtitleButton(true)
-                    this.resizeMode = aspectConst
+                    player = exoPlayer; useController = useNativeController; setShowSubtitleButton(true)
+                    keepScreenOn = true; this.resizeMode = aspectConst
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 }
             },
-            update = { view -> view.player = exoPlayer; view.useController = useNativeController; view.resizeMode = aspectConst },
+            update = { view ->
+                view.player = exoPlayer; view.useController = useNativeController
+                view.keepScreenOn = true; view.resizeMode = aspectConst
+            },
             modifier = Modifier.fillMaxSize()
         )
         if (gestureHudText.isNotEmpty()) {
@@ -417,7 +410,15 @@ fun ExoVideoPlayer(
 }
 
 @Composable
-fun VodDetailsDialog(S: Strings, theme: AppThemePalette, movie: VodMovie, savedProgress: VodProgressItem?, onPlayFromStart: () -> Unit, onResume: (Long) -> Unit, onDismiss: () -> Unit) {
+fun VodDetailsDialog(
+    S: Strings,
+    theme: AppThemePalette,
+    movie: VodMovie,
+    savedProgress: VodProgressItem?,
+    onPlayFromStart: () -> Unit,
+    onResume: (Long) -> Unit,
+    onDismiss: () -> Unit
+) {
     Dialog(onDismissRequest = onDismiss) {
         Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().heightIn(max = 580.dp)) {
             Column(modifier = Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -455,7 +456,10 @@ fun VodDetailsDialog(S: Strings, theme: AppThemePalette, movie: VodMovie, savedP
 }
 
 @Composable
-fun HiddenCategoriesDialog(S: Strings, theme: AppThemePalette, allGroups: List<String>, hiddenGroups: Set<String>, onToggleGroup: (String) -> Unit, onShowAll: () -> Unit, onDismiss: () -> Unit) {
+fun HiddenCategoriesDialog(
+    S: Strings, theme: AppThemePalette, allGroups: List<String>, hiddenGroups: Set<String>,
+    onToggleGroup: (String) -> Unit, onShowAll: () -> Unit, onDismiss: () -> Unit
+) {
     Dialog(onDismissRequest = onDismiss) {
         Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
             Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
@@ -463,14 +467,13 @@ fun HiddenCategoriesDialog(S: Strings, theme: AppThemePalette, allGroups: List<S
                     Text(if (S.isRu) "👁 Видимые категории" else "👁 Visible Categories", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.primary)
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null, tint = theme.text) }
                 }
-                Text(if (S.isRu) "Снимите галочки с лишних категорий:" else "Uncheck groups to hide:", fontSize = 12.sp, color = theme.subtext, modifier = Modifier.padding(bottom = 8.dp))
+                Text(if (S.isRu) "Снимите галочки с ненужных категорий:" else "Uncheck groups to hide:", fontSize = 12.sp, color = theme.subtext, modifier = Modifier.padding(bottom = 8.dp))
                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(allGroups) { grp ->
                         val isVisible = !hiddenGroups.contains(grp)
                         Row(
                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg)
-                                .tvFocusBorder(theme.primary, RoundedCornerShape(10.dp))
-                                .clickable { onToggleGroup(grp) }.padding(horizontal = 12.dp, vertical = 6.dp),
+                                .tvFocusHighlight(theme.primary, 10.dp).clickable { onToggleGroup(grp) }.padding(horizontal = 12.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(grp, color = if (isVisible) theme.text else theme.subtext, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1)
@@ -496,9 +499,8 @@ fun SleepTimerDialog(S: Strings, theme: AppThemePalette, currentMinutesLeft: Int
                 Text(if (S.isRu) "⏱ Таймер сна" else "⏱ Sleep Timer", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.primary)
                 if (currentMinutesLeft > 0) Text(if (S.isRu) "Выключение через: $currentMinutesLeft мин" else "Stopping in: ${currentMinutesLeft}m", fontSize = 13.sp, color = theme.text)
                 listOf(0, 15, 30, 60, 90).forEach { mins ->
-                    OutlinedButton(onClick = { onSelectMinutes(mins); onDismiss() }, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (mins == 0) (if (S.isRu) "🚫 Отключить" else "🚫 Turn Off") else "⏱ $mins мин", color = theme.text, fontWeight = FontWeight.Bold)
-                    }
+                    val label = if (mins == 0) (if (S.isRu) "🚫 Отключить таймер" else "🚫 Turn Off") else "⏱ $mins мин"
+                    OutlinedButton(onClick = { onSelectMinutes(mins); onDismiss() }, modifier = Modifier.fillMaxWidth()) { Text(label, color = theme.text, fontWeight = FontWeight.Bold) }
                 }
             }
         }
@@ -509,8 +511,8 @@ fun SleepTimerDialog(S: Strings, theme: AppThemePalette, currentMinutesLeft: Int
 fun TiviMateTvOverlay(
     S: Strings, theme: AppThemePalette, channels: List<Channel>, hiddenGroups: Set<String>,
     epgScheduleMap: Map<String, List<EpgProgramItem>>, reminders: List<ProgramReminder>,
-    currentChannel: Channel?, onSelectChannel: (Channel) -> Unit, onPlayArchive: (Channel, EpgProgramItem) -> Unit,
-    onToggleReminder: (Channel, EpgProgramItem) -> Unit, onClose: () -> Unit
+    currentChannel: Channel?, onSelectChannel: (Channel) -> Unit,
+    onPlayArchive: (Channel, EpgProgramItem) -> Unit, onToggleReminder: (Channel, EpgProgramItem) -> Unit, onClose: () -> Unit
 ) {
     val visibleChannels = remember(channels, hiddenGroups) { channels.filterNot { hiddenGroups.contains(it.group) } }
     val groups = remember(visibleChannels, S) { listOf(S.allGroups) + visibleChannels.map { it.group }.distinct() }
@@ -533,13 +535,12 @@ fun TiviMateTvOverlay(
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(groups) { grp ->
                         val isSel = grp == selGroup
-                        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (isSel) theme.primary else Color.Transparent).tvFocusBorder(Color.White, RoundedCornerShape(8.dp)).clickable { selGroup = grp }.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (isSel) theme.primary else Color.Transparent).tvFocusHighlight(Color.White, 8.dp).clickable { selGroup = grp }.padding(horizontal = 10.dp, vertical = 8.dp)) {
                             Text(grp, color = if (isSel) theme.onPrimary else Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
                         }
                     }
                 }
             }
-
             Column(modifier = Modifier.weight(1.15f).fillMaxHeight().clip(RoundedCornerShape(12.dp)).background(Color(0xDD141820)).padding(8.dp)) {
                 Text(if (S.isRu) "2. Каналы (${groupChannels.size})" else "2. Channels", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, modifier = Modifier.padding(6.dp))
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -547,8 +548,7 @@ fun TiviMateTvOverlay(
                         val isPreview = previewChannel?.id == ch.id
                         Row(
                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (isPreview) theme.selectedCard else Color(0x55000000))
-                                .tvFocusBorder(Color.White, RoundedCornerShape(8.dp))
-                                .border(if (isPreview) 1.5.dp else 0.dp, if (isPreview) theme.primary else Color.Transparent, RoundedCornerShape(8.dp))
+                                .tvFocusHighlight(Color.White, 8.dp).border(if (isPreview) 1.5.dp else 0.dp, if (isPreview) theme.primary else Color.Transparent, RoundedCornerShape(8.dp))
                                 .clickable { if (isPreview) { onSelectChannel(ch); onClose() } else previewChannel = ch }.padding(horizontal = 10.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -558,7 +558,6 @@ fun TiviMateTvOverlay(
                     }
                 }
             }
-
             Column(modifier = Modifier.weight(1.3f).fillMaxHeight().clip(RoundedCornerShape(12.dp)).background(Color(0xDD141820)).padding(8.dp)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("3. ${previewChannel?.name ?: "Гид"}", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, maxLines = 1, modifier = Modifier.weight(1f))
@@ -576,12 +575,9 @@ fun TiviMateTvOverlay(
                             val hasReminder = isFuture && reminders.any { it.channelId == previewChannel?.id && it.startMs == prog.startMs }
                             Column(
                                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (isNow) theme.selectedCard else Color(0x66000000))
-                                    .tvFocusBorder(Color.White, RoundedCornerShape(8.dp))
-                                    .clickable(enabled = canArchive || isNow || isFuture) {
+                                    .tvFocusHighlight(Color.White, 8.dp).clickable(enabled = canArchive || isNow || isFuture) {
                                         val ch = previewChannel ?: return@clickable
-                                        if (canArchive) { onPlayArchive(ch, prog); onClose() }
-                                        else if (isNow) { onSelectChannel(ch); onClose() }
-                                        else if (isFuture) onToggleReminder(ch, prog)
+                                        if (canArchive) { onPlayArchive(ch, prog); onClose() } else if (isNow) { onSelectChannel(ch); onClose() } else if (isFuture) onToggleReminder(ch, prog)
                                     }.padding(8.dp)
                             ) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -605,10 +601,7 @@ fun TiviMateTvOverlay(
 
 @Composable
 fun MultiViewScreenOverlay(S: Strings, theme: AppThemePalette, allChannels: List<Channel>, initialChannel: Channel, playerBufferMode: Int, playerDefaultUa: String, onExitMultiView: (Channel) -> Unit) {
-    var slots by remember {
-        val c2 = allChannels.getOrNull(1) ?: initialChannel; val c3 = allChannels.getOrNull(2) ?: initialChannel; val c4 = allChannels.getOrNull(3) ?: initialChannel
-        mutableStateOf(listOf(initialChannel, c2, c3, c4))
-    }
+    var slots by remember { mutableStateOf(listOf(initialChannel, allChannels.getOrNull(1) ?: initialChannel, allChannels.getOrNull(2) ?: initialChannel, allChannels.getOrNull(3) ?: initialChannel)) }
     var activeAudioSlot by remember { mutableStateOf(0) }
     var pickingSlotIndex by remember { mutableStateOf<Int?>(null) }
 
@@ -623,12 +616,8 @@ fun MultiViewScreenOverlay(S: Strings, theme: AppThemePalette, allChannels: List
             Row(modifier = Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (colIdx in 0..1) {
                     val slotIdx = rowIdx * 2 + colIdx; val ch = slots[slotIdx]; val isAudioActive = activeAudioSlot == slotIdx
-                    var resolvedSlotUrl by remember(ch.streamUrl) { mutableStateOf(if (ch.streamUrl.startsWith("stalker_")) "" else ch.streamUrl) }
-                    LaunchedEffect(ch.streamUrl) {
-                        if (ch.streamUrl.startsWith("stalker_")) resolvedSlotUrl = NetworkLoader.resolveStalkerStreamIfNeeded(ch.streamUrl)
-                    }
                     Box(modifier = Modifier.weight(1f).fillMaxHeight().border(if (isAudioActive) 3.dp else 1.dp, if (isAudioActive) theme.primary else Color.DarkGray, RoundedCornerShape(8.dp)).clip(RoundedCornerShape(8.dp)).clickable { activeAudioSlot = slotIdx }) {
-                        ExoVideoPlayer(resolvedSlotUrl, ch.userAgent ?: playerDefaultUa, 0, playerBufferMode, false, S.reconnecting, isMuted = !isAudioActive, modifier = Modifier.fillMaxSize())
+                        ExoVideoPlayer(ch.streamUrl, ch.userAgent ?: playerDefaultUa, 0, playerBufferMode, false, S.reconnecting, Modifier.fillMaxSize(), isMuted = !isAudioActive)
                         Row(modifier = Modifier.align(Alignment.TopStart).padding(6.dp).background(Color(0xBB000000), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(if (isAudioActive) "🔊 ${ch.name}" else "🔇 ${ch.name}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.widthIn(max = 110.dp))
                             Text(if (S.isRu) "🔄 Канал" else "🔄 Change", color = theme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { pickingSlotIndex = slotIdx })
@@ -649,7 +638,7 @@ fun ParentalPinDialog(S: Strings, theme: AppThemePalette, expectedPin: String, o
             Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(Icons.Default.Lock, null, tint = theme.primary, modifier = Modifier.size(44.dp))
                 Text(if (S.isRu) "🔒 Родительский контроль (18+)" else "🔒 Parental Control (18+)", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.text)
-                OutlinedTextField(value = entered, onValueChange = { entered = it.filter { c -> c.isDigit() }.take(4); error = false; if (entered == expectedPin) onSuccess() }, label = { Text(if (S.isRu) "Введите 4-значный PIN-код" else "Enter 4-digit PIN") }, singleLine = true)
+                OutlinedTextField(value = entered, onValueChange = { entered = it.filter { c -> c.isDigit() }.take(4); error = false; if (entered == expectedPin) onSuccess() }, label = { Text(if (S.isRu) "4-значный PIN" else "4-digit PIN") }, singleLine = true)
                 if (error) Text(if (S.isRu) "❌ Неверный PIN-код" else "❌ Wrong PIN", color = Color(0xFFEF4444), fontSize = 13.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(onClick = onDismiss) { Text(if (S.isRu) "Отмена" else "Cancel") }
