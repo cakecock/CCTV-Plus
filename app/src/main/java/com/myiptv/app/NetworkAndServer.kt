@@ -39,8 +39,8 @@ object NetworkLoader {
     private val keyExtractRegex = Regex("\\[key:([^\\]]+)\\]", RegexOption.IGNORE_CASE)
     private val urlExtractRegex = Regex("(https?://[^\\s\"'\\]]+)", RegexOption.IGNORE_CASE)
     private const val OTT_UA = "Mozilla/5.0 (SmartHub; SMART-TV; U; Linux/SmartTV) AppleWebKit/531.2+ OttPlayer/2.0"
+    private const val PAGE_SIZE = 50
 
-    // Умное извлечение ключа и http-адреса даже если вокруг есть лишний текст
     fun parseVPortalCredentials(rawUrl: String): Pair<String, String> {
         val keyMatch = keyExtractRegex.find(rawUrl)
         val urlMatch = urlExtractRegex.find(rawUrl)
@@ -134,7 +134,7 @@ object NetworkLoader {
             val targetUrl = customTargetUrl?.takeIf { it.startsWith("http") } ?: baseUrl
 
             if (!targetUrl.startsWith("http")) {
-                return@withContext emptyList<VodMovie>() to "В поле VPortal нет ссылки http://! Очистите поле крестиком и вставьте ссылку portal::[key:...]http://..."
+                return@withContext emptyList<VodMovie>() to "⚠️ В поле VPortal нет ссылки http://! Очистите поле крестиком и вставьте ссылку portal::[key:...]http://..."
             }
 
             val reqObj = if (!customRequestJson.isNullOrBlank()) {
@@ -145,9 +145,18 @@ object NetworkLoader {
             if (key.isNotEmpty() && !reqObj.has("key")) {
                 reqObj.put("key", key)
             }
+
+            // Если сервер прислал limit: 0 в шаблоне категории, меняем на 50 фильмов на страницу!
+            if (reqObj.has("limit") && reqObj.optInt("limit", 0) <= 0) {
+                reqObj.put("limit", PAGE_SIZE)
+            }
+
             if (!searchQuery.isNullOrBlank()) {
+                if (!reqObj.has("cmd")) reqObj.put("cmd", "flicks")
                 reqObj.put("search", searchQuery)
                 reqObj.put("query", searchQuery)
+                reqObj.put("offset", 0)
+                reqObj.put("limit", PAGE_SIZE)
             }
 
             val payloadStr = reqObj.toString()
@@ -160,13 +169,16 @@ object NetworkLoader {
 
             client.newCall(request).execute().use { resp ->
                 val body = resp.body?.string()?.trim() ?: ""
-                diagnostic = "HTTP ${resp.code} | Sent: $payloadStr | Resp: " + body.take(400).replace("\n", " ")
                 if (resp.isSuccessful && body.isNotEmpty()) {
                     parseVideoportalJson(body, targetUrl, reqObj, itemsOut)
+                    diagnostic = "✅ VPortal подключен (загружено объектов: ${itemsOut.size}) | Raw: " +
+                        body.take(300).replace("\n", " ")
+                } else {
+                    diagnostic = "❌ HTTP ${resp.code} | Sent: $payloadStr | Resp: " + body.take(300)
                 }
             }
         }.onFailure { err ->
-            diagnostic = "Ошибка VPortal: ${err.localizedMessage}"
+            diagnostic = "❌ Ошибка VPortal: ${err.localizedMessage}"
         }
 
         itemsOut to diagnostic
@@ -175,19 +187,24 @@ object NetworkLoader {
     private fun parseVideoportalJson(
         body: String,
         defaultApiUrl: String,
-        parentRequest: JSONObject,
+        sentRequest: JSONObject,
         out: MutableList<VodMovie>
     ) {
         runCatching {
             val rootObj = if (body.startsWith("{")) JSONObject(body) else null
             val rootUrl = rootObj?.optString("url")?.takeIf { it.startsWith("http") } ?: defaultApiUrl
-            val rootReq = rootObj?.optJSONObject("request") ?: parentRequest
+            val rootReq = rootObj?.optJSONObject("request") ?: sentRequest
 
+            // Проверяем, не вернул ли сервер сразу прямую ссылку на видеопоток в корне JSON
             if (rootObj != null) {
                 val rootStream = rootObj.optString("stream_url")
                     .ifEmpty { rootObj.optString("video_url") }
                     .ifEmpty { rootObj.optString("file") }
                     .ifEmpty { rootObj.optString("stream") }
+                    .ifEmpty {
+                        val u = rootObj.optString("url")
+                        if (u.startsWith("http") && !u.contains("/api/v1") && !rootObj.has("items")) u else ""
+                    }
                 if (rootStream.startsWith("http")) {
                     out.add(
                         VodMovie(
@@ -224,12 +241,16 @@ object NetworkLoader {
                     .ifEmpty { item.optString("label") }
                     .ifEmpty { "Раздел #${i + 1}" }
 
+                // Пропускаем служебные элементы поиска, так как у нас есть своя строка поиска сверху
+                if (itemType == "search" || itemType == "input") continue
+
                 val poster = item.optString("poster")
                     .ifEmpty { item.optString("logo") }
                     .ifEmpty { item.optString("icon") }
                     .ifEmpty { item.optString("cover") }
                     .ifEmpty { item.optString("img") }
                     .ifEmpty { item.optString("image") }
+                    .ifEmpty { item.optString("pic") }
 
                 val desc = item.optString("description")
                     .ifEmpty { item.optString("plot") }
@@ -238,7 +259,8 @@ object NetworkLoader {
                 val year = item.optString("year", "")
                 val rating = item.optString("rating", item.optString("rating_kp", item.optString("imdb", "")))
 
-                val itemUrl = item.optString("url").takeIf { it.startsWith("http") } ?: rootUrl
+                val rawItemUrl = item.optString("url")
+                val itemUrl = rawItemUrl.takeIf { it.startsWith("http") } ?: rootUrl
                 val directMedia = item.optString("stream_url")
                     .ifEmpty { item.optString("video_url") }
                     .ifEmpty { item.optString("file") }
@@ -247,15 +269,15 @@ object NetworkLoader {
 
                 val childReqObj = item.optJSONObject("request")
 
-                val isMediaUrl = directMedia.startsWith("http") ||
-                    itemUrl.endsWith(".m3u8", true) ||
-                    itemUrl.endsWith(".mp4", true) ||
-                    itemUrl.endsWith(".mkv", true) ||
-                    itemUrl.endsWith(".ts", true) ||
-                    (itemType in listOf("stream", "video", "file") && childReqObj == null && !itemUrl.contains("/api/v1"))
+                // Если у элемента НЕТ вложенного "request", а его ссылка ведет на поток (не на /api/v1/) — это готовое видео!
+                val isPlayableStream = childReqObj == null && (
+                    directMedia.startsWith("http") ||
+                        (rawItemUrl.startsWith("http") && !rawItemUrl.contains("/api/v1")) ||
+                        itemType in listOf("stream", "video", "file", "play")
+                    )
 
-                if (isMediaUrl && childReqObj == null) {
-                    val finalStream = directMedia.ifEmpty { itemUrl }
+                if (isPlayableStream) {
+                    val finalStream = directMedia.ifEmpty { rawItemUrl }
                     out.add(
                         VodMovie(
                             id = "vp_media_${i}_${System.nanoTime()}",
@@ -270,15 +292,23 @@ object NetworkLoader {
                         )
                     )
                 } else {
-                    val mergedReq = JSONObject(rootReq.toString())
+                    val mergedReq = JSONObject()
+                    // 1. Переносим базовый ключ из родительского запроса
+                    val parentKey = rootReq.optString("key").ifEmpty { sentRequest.optString("key") }
+                    if (parentKey.isNotEmpty()) mergedReq.put("key", parentKey)
+
+                    // 2. Копируем все параметры из "request" конкретного элемента (например: cmd="flicks", fid=1, offset=0, limit=50)
                     if (childReqObj != null) {
                         val keys = childReqObj.keys()
                         while (keys.hasNext()) {
                             val k = keys.next()
                             mergedReq.put(k, childReqObj.get(k))
                         }
+                        if (mergedReq.has("limit") && mergedReq.optInt("limit", 0) <= 0) {
+                            mergedReq.put("limit", PAGE_SIZE)
+                        }
                     } else {
-                        for (field in listOf("id", "category_id", "cat_id", "category", "cat", "action", "page")) {
+                        for (field in listOf("id", "fid", "category_id", "cat_id", "category", "cat", "cmd", "action", "page")) {
                             if (item.has(field)) {
                                 mergedReq.put(field, item.get(field))
                             }
@@ -301,6 +331,31 @@ object NetworkLoader {
                         )
                     )
                 }
+            }
+
+            // Если это список фильмов с пагинацией (limit/offset) и вернулась полная страница — добавляем кнопку "Следующая страница"
+            if (sentRequest.has("limit") && arr.length() >= 20) {
+                val nextReq = JSONObject(sentRequest.toString())
+                val curOffset = nextReq.optInt("offset", 0)
+                val curLimit = nextReq.optInt("limit", PAGE_SIZE).coerceAtLeast(20)
+                nextReq.put("offset", curOffset + curLimit)
+                nextReq.put("limit", curLimit)
+
+                out.add(
+                    VodMovie(
+                        id = "vp_next_${curOffset + curLimit}",
+                        title = "➡️ Следующая страница (+$curLimit)",
+                        category = "Навигация",
+                        posterUrl = null,
+                        description = "",
+                        year = "",
+                        rating = "",
+                        streamUrl = "",
+                        isFolder = true,
+                        requestPayloadJson = nextReq.toString(),
+                        targetApiUrl = rootUrl
+                    )
+                )
             }
         }
     }
