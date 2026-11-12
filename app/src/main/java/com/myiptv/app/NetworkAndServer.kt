@@ -73,7 +73,7 @@ object NetworkLoader {
                 var logo: String? = null
                 var epgId: String? = null
                 var ua: String? = null
-                var catchupDays = 3
+                var catchupDays = 0
                 var catchupSource: String? = null
                 var num = 1
 
@@ -91,11 +91,18 @@ object NetworkLoader {
                             logo = attrs["tvg-logo"]
                             epgId = attrs["tvg-id"] ?: attrs["tvg-name"]
                             group = attrs["group-title"]?.takeIf { it.isNotBlank() } ?: group
-                            catchupDays = attrs["catchup-days"]?.toIntOrNull()
+                            catchupSource = attrs["catchup-source"]
+
+                            // Определяем, есть ли у канала реальная поддержка архива в плейлисте
+                            val explicitDays = attrs["catchup-days"]?.toIntOrNull()
                                 ?: attrs["tvg-rec"]?.toIntOrNull()
                                 ?: attrs["timeshift"]?.toIntOrNull()
-                                ?: 3
-                            catchupSource = attrs["catchup-source"]
+                            val hasCatchupTag = !attrs["catchup"].isNullOrBlank() || !catchupSource.isNullOrBlank()
+                            catchupDays = when {
+                                explicitDays != null && explicitDays > 0 -> explicitDays
+                                hasCatchupTag -> 3
+                                else -> 0
+                            }
                         }
                         t.startsWith("#EXTGRP:") -> group = t.substringAfter("#EXTGRP:").trim()
                         t.startsWith("#EXTVLCOPT:http-user-agent=") -> ua = t.substringAfter("=").trim()
@@ -108,7 +115,7 @@ object NetworkLoader {
                                     channels.add(Channel("ch_$num", num, name, group, logo, t, epgId, ua, catchupDays, catchupSource))
                                 }
                                 num++
-                                name = ""; logo = null; epgId = null; ua = null; catchupDays = 3; catchupSource = null
+                                name = ""; logo = null; epgId = null; ua = null; catchupDays = 0; catchupSource = null
                             }
                         }
                     }
@@ -340,13 +347,12 @@ object NetworkLoader {
         list
     }
 
-    // Полная загрузка EPG: связывает каналы и по ID, и по названию (<display-name>) + собирает расписание для Архива
     suspend fun loadFullEpgSchedule(epgUrl: String): Map<String, List<EpgProgramItem>> = withContext(Dispatchers.IO) {
         val rawById = mutableMapOf<String, MutableList<EpgProgramItem>>()
         val displayNameToId = mutableMapOf<String, String>()
         val nowMs = System.currentTimeMillis()
-        val windowStart = nowMs - 48L * 3600L * 1000L // 2 дня назад (для Архива)
-        val windowEnd = nowMs + 24L * 3600L * 1000L   // 1 день вперед
+        val windowStart = nowMs - 48L * 3600L * 1000L
+        val windowEnd = nowMs + 24L * 3600L * 1000L
         val sdfWithTz = SimpleDateFormat("yyyyMMddHHmmss Z", Locale.US)
         val sdfNoTz = SimpleDateFormat("yyyyMMddHHmmss", Locale.US)
         val timeFmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
@@ -421,7 +427,6 @@ object NetworkLoader {
             }
         }
 
-        // Создаем итоговую карту, где программы доступны и по ID, и по названию канала в нижнем регистре
         val finalMap = mutableMapOf<String, List<EpgProgramItem>>()
         rawById.forEach { (id, list) ->
             val sorted = list.sortedBy { it.startMs }
