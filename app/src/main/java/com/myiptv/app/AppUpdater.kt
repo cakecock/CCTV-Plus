@@ -11,6 +11,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 data class ReleaseInfo(
@@ -60,7 +61,6 @@ object GitHubUpdater {
             var foundRelease: ReleaseInfo? = null
 
             for (repoFullName in candidateRepos.distinct()) {
-                // Способ 1: Проверяем прямую выгрузку version.json в репозитории (работает всегда без 404!)
                 val directVerUrl = "https://raw.githubusercontent.com/$repoFullName/main/version.json"
                 val directReq = Request.Builder().url(directVerUrl).header("User-Agent", "CCTV-Plus-Updater").build()
                 runCatching {
@@ -69,13 +69,12 @@ object GitHubUpdater {
                             val obj = JSONObject(resp.body?.string() ?: "{}")
                             val tag = obj.optString("tag_name", "v1.latest")
                             val apkUrl = "https://raw.githubusercontent.com/$repoFullName/main/CCTV-Plus.apk"
-                            foundRelease = ReleaseInfo(tag, apkUrl, "Прямое обновление из репозитория $repoFullName")
+                            foundRelease = ReleaseInfo(tag, apkUrl, "Прямое обновление из $repoFullName")
                         }
                     }
                 }
                 if (foundRelease != null) break
 
-                // Способ 2: Проверяем раздел Releases
                 val relReq = Request.Builder()
                     .url("https://api.github.com/repos/$repoFullName/releases/latest")
                     .header("Accept", "application/vnd.github+json")
@@ -101,11 +100,15 @@ object GitHubUpdater {
                 if (foundRelease != null) break
             }
 
-            foundRelease ?: throw IllegalStateException("Сборка еще не опубликована роботом на GitHub. Подождите окончания сборки в Actions.")
+            foundRelease ?: throw IllegalStateException("Сборка не найдена на GitHub.")
         }
     }
 
-    suspend fun downloadAndInstall(context: Context, downloadUrl: String): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun downloadAndInstall(
+        context: Context,
+        downloadUrl: String,
+        onProgress: (percent: Int, downloadedMb: String, totalMb: String) -> Unit
+    ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val req = Request.Builder().url(downloadUrl).header("User-Agent", "CCTV-Plus-Updater").build()
             val outDir = context.getExternalFilesDir(null) ?: context.cacheDir
@@ -114,9 +117,32 @@ object GitHubUpdater {
 
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
-                val inStream = resp.body?.byteStream() ?: throw IllegalStateException("Empty APK stream")
+                val body = resp.body ?: throw IllegalStateException("Empty APK body")
+                val totalBytes = body.contentLength()
+                val inStream = body.byteStream()
+
                 FileOutputStream(apkFile).use { outStream ->
-                    inStream.copyTo(outStream)
+                    val buffer = ByteArray(16 * 1024)
+                    var downloadedBytes = 0L
+                    var read: Int
+                    var lastReportedPercent = -1
+
+                    while (inStream.read(buffer).also { read = it } != -1) {
+                        outStream.write(buffer, 0, read)
+                        downloadedBytes += read
+                        val percent = if (totalBytes > 0) ((downloadedBytes * 100) / totalBytes).toInt() else -1
+                        if (percent != lastReportedPercent) {
+                            lastReportedPercent = percent
+                            val dlMb = String.format(Locale.US, "%.1f", downloadedBytes / (1024f * 1024f))
+                            val totMb = if (totalBytes > 0) {
+                                String.format(Locale.US, "%.1f", totalBytes / (1024f * 1024f))
+                            } else "?"
+                            withContext(Dispatchers.Main) {
+                                onProgress(percent.coerceIn(0, 100), dlMb, totMb)
+                            }
+                        }
+                    }
+                    outStream.flush()
                 }
             }
 
