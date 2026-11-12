@@ -46,18 +46,23 @@ import java.util.Date
 import java.util.Locale
 
 private const val FAV_GROUP_TAG = "__FAV_CATEGORY__"
-private const val DEFAULT_FALLBACK_EPG = "http://epg.it999.ru/edem.xml.gz"
+private const val EPG_URL_TVLIDER = "http://epg.it999.ru/edem.xml.gz"
+private const val EPG_URL_IPTVX_LITE = "https://iptvx.one/epg/epg_lite.xml.gz"
+private const val EPG_URL_IPTVX_FULL = "https://iptvx.one/epg/epg.xml.gz"
 
 fun findChannelSchedule(ch: Channel, epgMap: Map<String, List<EpgProgramItem>>): List<EpgProgramItem> {
     if (epgMap.isEmpty()) return emptyList()
-    ch.epgId?.let { id ->
+    ch.epgId?.takeIf { it.isNotBlank() }?.let { id ->
         epgMap[id]?.let { return it }
         epgMap[id.lowercase()]?.let { return it }
+        val normId = normalizeChannelKey(id)
+        if (normId.isNotEmpty()) epgMap[normId]?.let { return it }
     }
     val lowName = ch.name.trim().lowercase()
     epgMap[lowName]?.let { return it }
-    val cleanName = lowName.replace(" hd", "").replace(" fhd", "").replace(" 4k", "").replace(" orig", "").trim()
-    return epgMap[cleanName] ?: emptyList()
+    val normName = normalizeChannelKey(ch.name)
+    if (normName.isNotEmpty()) epgMap[normName]?.let { return it }
+    return emptyList()
 }
 
 class MainActivity : ComponentActivity() {
@@ -168,27 +173,47 @@ class MainActivity : ComponentActivity() {
                     .apply()
             }
 
+            // Каскадная загрузка EPG с поддержкой встроенных пресетов TVLider и IPTVx
             fun loadEpgWithStatus(embeddedOverride: String? = detectedPlaylistEpgUrl) {
-                val customSelected = epgSources.find { it.id == selectedEpgId }?.url ?: epgSources.firstOrNull()?.url
-                val epgUrlToLoad = when {
-                    usePlaylistEpg && !embeddedOverride.isNullOrBlank() -> embeddedOverride
-                    selectedEpgId != "AUTO_PLAYLIST" && !customSelected.isNullOrBlank() -> customSelected
-                    !embeddedOverride.isNullOrBlank() -> embeddedOverride
-                    !customSelected.isNullOrBlank() -> customSelected
-                    else -> DEFAULT_FALLBACK_EPG
-                }
+                val customSelected = epgSources.find { it.id == selectedEpgId }?.url
+                val candidateUrls = when (selectedEpgId) {
+                    "BUILTIN_TVLIDER" -> listOf(EPG_URL_TVLIDER, EPG_URL_IPTVX_LITE)
+                    "BUILTIN_IPTVX_LITE" -> listOf(EPG_URL_IPTVX_LITE, EPG_URL_TVLIDER)
+                    "BUILTIN_IPTVX_FULL" -> listOf(EPG_URL_IPTVX_FULL, EPG_URL_IPTVX_LITE)
+                    "AUTO_PLAYLIST" -> listOfNotNull(
+                        embeddedOverride?.takeIf { it.isNotBlank() },
+                        EPG_URL_IPTVX_LITE,
+                        EPG_URL_TVLIDER
+                    )
+                    else -> listOfNotNull(customSelected?.takeIf { it.isNotBlank() }, EPG_URL_IPTVX_LITE, EPG_URL_TVLIDER)
+                }.distinct()
+
                 scope.launch {
                     isEpgLoading = true
-                    epgStatusText = if (isRu) "⏳ Загрузка EPG: $epgUrlToLoad" else "⏳ Loading EPG: $epgUrlToLoad"
-                    val loadedSchedule = NetworkLoader.loadFullEpgSchedule(epgUrlToLoad.trim())
-                    epgScheduleMap = loadedSchedule
+                    var finalSchedule = emptyMap<String, List<EpgProgramItem>>()
+                    var usedUrl = ""
+
+                    for (testUrl in candidateUrls) {
+                        usedUrl = testUrl
+                        epgStatusText = if (isRu) "⏳ Загрузка EPG: $testUrl ..." else "⏳ Loading EPG: $testUrl ..."
+                        val loaded = NetworkLoader.loadFullEpgSchedule(testUrl.trim())
+                        if (loaded.isNotEmpty()) {
+                            finalSchedule = loaded
+                            break
+                        }
+                    }
+
+                    epgScheduleMap = finalSchedule
                     isEpgLoading = false
                     val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                    epgStatusText = if (loadedSchedule.isNotEmpty()) {
-                        if (isRu) "✅ Обновлено в $timeStr (каналов: ${loadedSchedule.size / 2})"
-                        else "✅ Updated at $timeStr (${loadedSchedule.size / 2} channels)"
+                    val matchedCount = channels.count { findChannelSchedule(it, finalSchedule).isNotEmpty() }
+
+                    epgStatusText = if (finalSchedule.isNotEmpty()) {
+                        if (isRu) "✅ Обновлено в $timeStr ($usedUrl)\nНайдена программа для $matchedCount из ${channels.size} каналов"
+                        else "✅ Updated at $timeStr: matched $matchedCount / ${channels.size} channels"
                     } else {
-                        if (isRu) "⚠️ Завершено ($timeStr), передач не найдено" else "⚠️ Finished ($timeStr), no programs"
+                        if (isRu) "⚠️ Не удалось загрузить передач ($timeStr). Попробуйте выбрать другой встроенный источник EPG в списке ниже."
+                        else "⚠️ Failed to load EPG ($timeStr). Try another EPG preset below."
                     }
                 }
             }
@@ -445,7 +470,6 @@ class MainActivity : ComponentActivity() {
                                     modifier = Modifier.fillMaxSize()
                                 )
 
-                                // Верхняя панель кнопок полноэкранного плеера
                                 Row(
                                     modifier = Modifier.align(Alignment.TopStart).padding(10.dp).background(Color(0xCC000000), RoundedCornerShape(12.dp)).padding(horizontal = 10.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -482,7 +506,6 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
 
-                                // Нижняя шкала времени
                                 if (!isVod && currentChannel != null && !showTiviMateOverlay) {
                                     Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(14.dp).background(Color(0xCC121417), RoundedCornerShape(14.dp)).padding(horizontal = 16.dp, vertical = 10.dp)) {
                                         if (isArchive && activeArchiveProgram != null) {
@@ -521,7 +544,6 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
 
-                                // 3-колоночный прозрачный ТВ-гид поверх идущего видео (как в TiviMate)
                                 if (showTiviMateOverlay) {
                                     TiviMateTvOverlay(
                                         S = S, theme = themePalette, channels = channels, epgScheduleMap = epgScheduleMap,
@@ -702,7 +724,7 @@ fun EpgAndArchiveDialog(
                 Spacer(Modifier.height(10.dp))
                 if (schedule.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(if (S.isRu) "Для канала «${channel.name}» программа передач пока не найдена." else "No TV guide found.", fontSize = 14.sp, color = theme.subtext)
+                        Text(if (S.isRu) "Для канала «${channel.name}» программа передач не найдена.\nВыберите в Настройках -> Телепрограмма встроенный источник TVLider или IPTVx." else "No TV guide found.", fontSize = 14.sp, color = theme.subtext)
                     }
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
@@ -850,8 +872,10 @@ fun LiveTvScreen(
                             Text("📺 ${nowProg.title}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = theme.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             LinearProgressIndicator(progress = { progFraction }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)), color = theme.primary)
                             Text("🕒 ${nowProg.timeRangeText} • ⏪ Архив", fontSize = 10.sp, color = theme.primary, maxLines = 1)
+                        } else if (curSchedule.isNotEmpty()) {
+                            Text("📅 Программа загружена (${curSchedule.size} пер.)\nНажмите для открытия Архива", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = theme.primary)
                         } else {
-                            Text(if (S.isRu) "📅 Программа и Архив\n(Нажмите для расписания)" else "📅 EPG & Archive", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = theme.subtext)
+                            Text(if (S.isRu) "📅 Программа не найдена\n(Нажмите для проверки)" else "📅 EPG & Archive", fontSize = 11.sp, fontWeight = FontWeight.Medium, color = theme.subtext)
                         }
                     }
 
