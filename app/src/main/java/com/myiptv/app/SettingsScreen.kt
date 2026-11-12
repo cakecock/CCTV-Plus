@@ -164,6 +164,8 @@ fun AccordionSettingsScreen(
     clockPosition: Int,
     playerEngine: Int,
     archiveDays: Int,
+    sleepTimerMinutes: Int,
+    hiddenGroupsCount: Int,
     parentalEnabled: Boolean,
     parentalPin: String,
     onDeviceTypeChange: (String) -> Unit,
@@ -171,6 +173,8 @@ fun AccordionSettingsScreen(
     onClockPositionChange: (Int) -> Unit,
     onPlayerEngineChange: (Int) -> Unit,
     onArchiveDaysChange: (Int) -> Unit,
+    onSleepTimerChange: (Int) -> Unit,
+    onOpenHiddenGroups: () -> Unit,
     onParentalEnabledChange: (Boolean) -> Unit,
     onParentalPinChange: (String) -> Unit,
     onSelectTheme: (AppThemePalette) -> Unit,
@@ -253,7 +257,7 @@ fun AccordionSettingsScreen(
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
 
-        // 1. ИСТОЧНИКИ (Плейлисты, EPG, Порталы, QR)
+        // 1. ИСТОЧНИКИ
         ExpandableSectionRow(S.catSourcesGroup, expandedRow == 0, theme, { toggleRow(0) }) {
             val subOpts = listOf(
                 "playlists" to "${S.catPlaylists} (${playlists.size})",
@@ -270,6 +274,11 @@ fun AccordionSettingsScreen(
                     if (playlists.isNotEmpty()) {
                         val curName = playlists.find { it.id == selectedPlaylistId }?.name ?: playlists.first().name
                         SourceDropdownSelector(S.activePlaylistLabel, "📺 $curName", playlists.map { it.id to it.name }, theme, onSelectPlaylist)
+                    }
+                    OutlinedButton(onClick = onOpenHiddenGroups, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.VisibilityOff, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (S.isRu) "Скрыть категории (скрыто: $hiddenGroupsCount)" else "Hide Categories ($hiddenGroupsCount)")
                     }
                     OutlinedTextField(value = newPlName, onValueChange = { newPlName = it }, label = { Text(S.addSourceName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = newPlUrl, onValueChange = { newPlUrl = it }, label = { Text(S.addSourceUrl) }, trailingIcon = { if (newPlUrl.isNotEmpty()) IconButton(onClick = { newPlUrl = "" }) { Icon(Icons.Default.Clear, null) } }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -354,6 +363,10 @@ fun AccordionSettingsScreen(
                 Text(if (S.isRu) "Сразу на весь экран" else "Auto Fullscreen", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = theme.text)
                 Switch(checked = openFullscreenOnTap, onCheckedChange = onAutoFsChange)
             }
+
+            val sleepOpts = listOf("0" to (if (S.isRu) "Выкл" else "Off"), "15" to "15 мин", "30" to "30 мин", "60" to "60 мин", "90" to "90 мин")
+            val curSleepTitle = if (sleepTimerMinutes > 0) "⏱ $sleepTimerMinutes мин" else (if (S.isRu) "Выкл" else "Off")
+            SourceDropdownSelector(if (S.isRu) "Таймер сна:" else "Sleep Timer:", curSleepTitle, sleepOpts, theme) { onSleepTimerChange(it.toIntOrNull() ?: 0) }
 
             val resizeOpts = listOf("0" to "По размеру", "1" to "На весь экран (16:9)", "2" to "Обрезка (Zoom)")
             SourceDropdownSelector(if (S.isRu) "Формат:" else "Aspect:", resizeOpts.find { it.first == playerResizeMode.toString() }?.second ?: resizeOpts.first().second, resizeOpts, theme) { onPlayerResizeChange(it.toIntOrNull() ?: 0) }
