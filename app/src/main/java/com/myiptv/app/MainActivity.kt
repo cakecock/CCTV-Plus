@@ -794,6 +794,7 @@ fun CategorizedSettingsScreen(
     onSaveAndReload: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var activeSection by remember { mutableStateOf(0) }
     val sections = listOf(S.catAppearance, S.catPlaylists, S.catEpg, S.catPortals, S.catQr)
 
@@ -801,6 +802,10 @@ fun CategorizedSettingsScreen(
     var newPlaylistUrl by remember { mutableStateOf("") }
     var newEpgName by remember { mutableStateOf("") }
     var newEpgUrl by remember { mutableStateOf("") }
+
+    var updateStatus by remember { mutableStateOf("") }
+    var latestRelease by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var isUpdating by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize().padding(14.dp)) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
@@ -825,6 +830,81 @@ fun CategorizedSettingsScreen(
         ) {
             when (activeSection) {
                 0 -> {
+                    // БЛОК АВТООБНОВЛЕНИЯ С GITHUB (cakecock/MyIPTV)
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = theme.card),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                text = if (S.isRu) "🔄 Обновление приложения (GitHub)" else "🔄 App Update (GitHub)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = theme.primary
+                            )
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        isUpdating = true
+                                        updateStatus = if (S.isRu) "Проверяем свежую сборку на GitHub..." else "Checking GitHub..."
+                                        val res = GitHubUpdater.checkLatestRelease()
+                                        isUpdating = false
+                                        res.onSuccess { info ->
+                                            latestRelease = info
+                                            updateStatus = if (S.isRu) "Найдена сборка: ${info.versionTag}" else "Found: ${info.versionTag}"
+                                        }.onFailure { err ->
+                                            updateStatus = if (S.isRu) "Ошибка: ${err.localizedMessage}" else "Error: ${err.localizedMessage}"
+                                        }
+                                    }
+                                },
+                                enabled = !isUpdating,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.SystemUpdate, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (S.isRu) "Проверить наличие обновлений" else "Check for Updates")
+                            }
+
+                            if (isUpdating) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = theme.primary)
+                            }
+
+                            if (updateStatus.isNotBlank()) {
+                                Text(updateStatus, fontSize = 13.sp, color = theme.text)
+                            }
+
+                            if (latestRelease != null) {
+                                Button(
+                                    onClick = {
+                                        val info = latestRelease ?: return@Button
+                                        scope.launch {
+                                            isUpdating = true
+                                            updateStatus = if (S.isRu) "Скачиваем ${info.versionTag}..." else "Downloading ${info.versionTag}..."
+                                            val dl = GitHubUpdater.downloadAndInstall(context, info.downloadUrl)
+                                            isUpdating = false
+                                            dl.onSuccess {
+                                                updateStatus = if (S.isRu) "Окно установки открыто!" else "Installer opened!"
+                                            }.onFailure { err ->
+                                                updateStatus = if (S.isRu) "Ошибка установки: ${err.localizedMessage}" else "Error: ${err.localizedMessage}"
+                                            }
+                                        }
+                                    },
+                                    enabled = !isUpdating,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.CloudDownload, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        if (S.isRu) "⬇️ Скачать и установить ${latestRelease!!.versionTag}"
+                                        else "⬇️ Download & Install ${latestRelease!!.versionTag}",
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Text(
                         if (S.isRu) "Цветовая тема (2 Тёмные / 2 Светлые):" else "Color Theme (2 Dark / 2 Light):",
                         fontWeight = FontWeight.Bold,
