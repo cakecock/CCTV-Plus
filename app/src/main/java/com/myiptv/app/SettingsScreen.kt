@@ -52,16 +52,24 @@ fun getAppVersionInfo(context: Context): Pair<String, Long> = runCatching {
 }.getOrDefault("2.0" to 1L)
 
 @Composable
-fun Modifier.tvFocusHighlight(accentColor: Color, cornerRadius: Dp = 12.dp): Modifier {
+fun Modifier.tvFocusHighlight(accentColor: Color, cornerRadius: Dp = 12.dp): Modifier =
+    tvFocusHighlight(accentColor, RoundedCornerShape(cornerRadius))
+
+@Composable
+fun Modifier.tvFocusHighlight(accentColor: Color, shape: androidx.compose.ui.graphics.Shape): Modifier {
     var isFocused by remember { mutableStateOf(false) }
     return this
         .onFocusChanged { isFocused = it.isFocused }
-        .border(if (isFocused) 2.5.dp else 0.dp, if (isFocused) accentColor else Color.Transparent, RoundedCornerShape(cornerRadius))
+        .border(if (isFocused) 2.5.dp else 0.dp, if (isFocused) accentColor else Color.Transparent, shape)
 }
 
 @Composable
 fun Modifier.tvFocusBorder(accentColor: Color, cornerRadius: Dp = 12.dp): Modifier =
     tvFocusHighlight(accentColor, cornerRadius)
+
+@Composable
+fun Modifier.tvFocusBorder(accentColor: Color, shape: androidx.compose.ui.graphics.Shape): Modifier =
+    tvFocusHighlight(accentColor, shape)
     
 @Composable
 fun SourceDropdownSelector(
