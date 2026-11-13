@@ -11,6 +11,7 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,6 +50,18 @@ fun getAppVersionInfo(context: Context): Pair<String, Long> = runCatching {
     (pInfo.versionName ?: "2.0") to pInfo.longVersionCode
 }.getOrDefault("2.0" to 1L)
 
+@Composable
+fun Modifier.tvFocusHighlight(accentColor: Color, cornerRadius: Dp = 12.dp): Modifier {
+    var isFocused by remember { mutableStateOf(false) }
+    return this
+        .onFocusChanged { isFocused = it.isFocused }
+        .border(if (isFocused) 2.5.dp else 0.dp, if (isFocused) accentColor else Color.Transparent, RoundedCornerShape(cornerRadius))
+}
+
+@Composable
+fun Modifier.tvFocusBorder(accentColor: Color, cornerRadius: Dp = 12.dp): Modifier =
+    tvFocusHighlight(accentColor, cornerRadius)
+    
 @Composable
 fun SourceDropdownSelector(
     label: String,
