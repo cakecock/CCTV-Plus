@@ -343,9 +343,14 @@ fun AccordionSettingsScreen(
     var curPinInput by remember { mutableStateOf("") }
     var newPinInput by remember { mutableStateOf("") }
     var pinChangeStatus by remember { mutableStateOf("") }
+    var isPinBusy by remember { mutableStateOf(false) }
     var showDisableParentalDialog by remember { mutableStateOf(false) }
     var disablePinInput by remember { mutableStateOf("") }
     var disablePinError by remember { mutableStateOf(false) }
+    var showForceSetPinDialog by remember { mutableStateOf(false) }
+    var forcePinInput by remember { mutableStateOf("") }
+    var forcePinError by remember { mutableStateOf("") }
+    var pendingBackupExportAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     var qrUrl by remember { mutableStateOf("") }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -417,7 +422,90 @@ fun AccordionSettingsScreen(
         DonateDialog(S, theme) { showDonateDialog = false }
     }
 
+    if (pendingBackupExportAction != null) {
+        AlertDialog(
+            onDismissRequest = { pendingBackupExportAction = null },
+            containerColor = theme.card,
+            titleContentColor = theme.text,
+            textContentColor = theme.text,
+            title = { Text(if (S.isRu) "⚠️ Внимание: приватные данные" else "⚠️ Security Notice", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    if (S.isRu) "Резервная копия содержит ваши ссылки на плейлисты, ключи VPortal и Stalker MAC в открытом виде. Храните файл в надёжном месте и не делитесь им с посторонними."
+                    else "The backup includes your playlist URLs, VPortal keys, and Stalker MAC in plaintext. Store it safely and do not share it.",
+                    fontSize = 13.sp, color = theme.subtext
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val act = pendingBackupExportAction
+                    pendingBackupExportAction = null
+                    act?.invoke()
+                }) { Text(if (S.isRu) "Продолжить" else "Continue") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingBackupExportAction = null }) { Text(if (S.isRu) "Отмена" else "Cancel", color = theme.subtext) }
+            }
+        )
+    }
+
+    if (showForceSetPinDialog) {
+        AlertDialog(
+            onDismissRequest = { showForceSetPinDialog = false },
+            containerColor = theme.card,
+            titleContentColor = theme.text,
+            textContentColor = theme.text,
+            title = { Text(if (S.isRu) "🔐 Задайте свой PIN-код" else "🔐 Set Custom PIN", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (S.isRu) "Чтобы защита 18+ была надёжной, задайте собственный PIN (4–8 цифр, отличный от 0000):"
+                        else "Set a custom PIN (4–8 digits, not 0000) to enable 18+ lock:",
+                        fontSize = 13.sp, color = theme.subtext
+                    )
+                    OutlinedTextField(
+                        value = forcePinInput,
+                        onValueChange = { forcePinInput = it.filter { c -> c.isDigit() }.take(8); forcePinError = "" },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        isError = forcePinError.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (forcePinError.isNotEmpty()) {
+                        Text(forcePinError, color = Color(0xFFEF4444), fontSize = 12.sp)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !isPinBusy,
+                    onClick = {
+                        when {
+                            forcePinInput.length < 4 -> forcePinError = if (S.isRu) "Минимум 4 цифры" else "At least 4 digits"
+                            forcePinInput == "0000" -> forcePinError = if (S.isRu) "Выберите код сложнее 0000" else "Choose a PIN other than 0000"
+                            else -> {
+                                val pinVal = forcePinInput
+                                isPinBusy = true
+                                scope.launch {
+                                    withContext(Dispatchers.Default) { setParentalPin(prefs, pinVal) }
+                                    isPinBusy = false
+                                    showForceSetPinDialog = false
+                                    onParentalPinChange(pinVal)
+                                    onParentalEnabledChange(true)
+                                }
+                            }
+                        }
+                    }
+                ) { Text(if (S.isRu) "Включить защиту" else "Enable Lock") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showForceSetPinDialog = false }) { Text(if (S.isRu) "Отмена" else "Cancel", color = theme.subtext) }
+            }
+        )
+    }
+
     if (showDisableParentalDialog) {
+        val lockSec = getPinLockoutSecondsLeft(prefs)
         AlertDialog(
             onDismissRequest = { showDisableParentalDialog = false },
             containerColor = theme.card,
@@ -427,7 +515,7 @@ fun AccordionSettingsScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        if (S.isRu) "Введите текущий PIN-код (по умолчанию 0000):" else "Enter current PIN (default 0000):",
+                        if (S.isRu) "Введите текущий PIN-код:" else "Enter current PIN:",
                         fontSize = 13.sp, color = theme.subtext
                     )
                     OutlinedTextField(
@@ -435,23 +523,38 @@ fun AccordionSettingsScreen(
                         onValueChange = { disablePinInput = it.filter { c -> c.isDigit() }.take(8); disablePinError = false },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true,
+                        enabled = lockSec == 0L && !isPinBusy,
                         isError = disablePinError,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    if (disablePinError) {
+                    if (lockSec > 0L) {
+                        Text(if (S.isRu) "⏳ Подождите ${lockSec}с" else "⏳ Wait ${lockSec}s", color = Color(0xFFF59E0B), fontSize = 12.sp)
+                    } else if (disablePinError) {
                         Text(if (S.isRu) "❌ Неверный PIN-код" else "❌ Wrong PIN", color = Color(0xFFEF4444), fontSize = 12.sp)
                     }
                 }
             },
             confirmButton = {
-                Button(onClick = {
-                    if (verifyParentalPin(prefs, disablePinInput)) {
-                        showDisableParentalDialog = false
-                        onParentalEnabledChange(false)
-                    } else {
-                        disablePinError = true
+                Button(
+                    enabled = lockSec == 0L && !isPinBusy,
+                    onClick = {
+                        val pinToCheck = disablePinInput
+                        isPinBusy = true
+                        scope.launch {
+                            val ok = withContext(Dispatchers.Default) { verifyParentalPin(prefs, pinToCheck) }
+                            isPinBusy = false
+                            if (ok) {
+                                withContext(Dispatchers.Default) { resetPinFailedAttempts(prefs) }
+                                showDisableParentalDialog = false
+                                onParentalEnabledChange(false)
+                            } else {
+                                withContext(Dispatchers.Default) { recordPinFailedAttempt(prefs) }
+                                disablePinError = true
+                                disablePinInput = ""
+                            }
+                        }
                     }
-                }) { Text(if (S.isRu) "Отключить" else "Disable") }
+                ) { Text(if (S.isRu) "Отключить" else "Disable") }
             },
             dismissButton = {
                 TextButton(onClick = { showDisableParentalDialog = false }) { Text(if (S.isRu) "Отмена" else "Cancel", color = theme.subtext) }
@@ -663,14 +766,19 @@ fun AccordionSettingsScreen(
                     Text(if (S.isRu) "🔒 Защита 18+ (PIN-код)" else "🔒 18+ PIN Lock", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = theme.text)
                     Switch(checked = parentalEnabled, onCheckedChange = { wantEnable ->
                         if (wantEnable) {
-                            onParentalEnabledChange(true)
+                            if (hasCustomParentalPin(prefs)) {
+                                onParentalEnabledChange(true)
+                            } else {
+                                forcePinInput = ""
+                                forcePinError = ""
+                                showForceSetPinDialog = true
+                            }
                         } else {
                             disablePinInput = ""
                             disablePinError = false
                             showDisableParentalDialog = true
                         }
                     })
-                }
 
                 val needCurrentPin = parentalEnabled || hasCustomParentalPin(prefs)
                 if (needCurrentPin) {
@@ -692,20 +800,33 @@ fun AccordionSettingsScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Button(
+                    enabled = !isPinBusy,
                     onClick = {
                         when {
                             newPinInput.length < 4 -> {
                                 pinChangeStatus = if (S.isRu) "⚠️ Минимум 4 цифры" else "⚠️ At least 4 digits"
                             }
-                            needCurrentPin && !verifyParentalPin(prefs, curPinInput) -> {
-                                pinChangeStatus = if (S.isRu) "❌ Неверный текущий PIN" else "❌ Wrong current PIN"
+                            newPinInput == "0000" -> {
+                                pinChangeStatus = if (S.isRu) "⚠️ Выберите PIN сложнее 0000" else "⚠️ Choose a PIN other than 0000"
                             }
                             else -> {
-                                setParentalPin(prefs, newPinInput)
-                                onParentalPinChange(newPinInput)
-                                curPinInput = ""
-                                newPinInput = ""
-                                pinChangeStatus = if (S.isRu) "✅ PIN надёжно сохранён" else "✅ PIN saved securely"
+                                val oldPin = curPinInput
+                                val newPin = newPinInput
+                                isPinBusy = true
+                                scope.launch {
+                                    val oldOk = !needCurrentPin || withContext(Dispatchers.Default) { verifyParentalPin(prefs, oldPin) }
+                                    if (!oldOk) {
+                                        isPinBusy = false
+                                        pinChangeStatus = if (S.isRu) "❌ Неверный текущий PIN" else "❌ Wrong current PIN"
+                                    } else {
+                                        withContext(Dispatchers.Default) { setParentalPin(prefs, newPin) }
+                                        isPinBusy = false
+                                        onParentalPinChange(newPin)
+                                        curPinInput = ""
+                                        newPinInput = ""
+                                        pinChangeStatus = if (S.isRu) "✅ PIN надёжно сохранён" else "✅ PIN saved securely"
+                                    }
+                                }
                             }
                         }
                     },
@@ -772,7 +893,7 @@ fun AccordionSettingsScreen(
         // 5. РЕЗЕРВНАЯ КОПИЯ
         item {
             ExpandableSectionRow(S.catBackup, expandedRow == 4, theme, { toggleRow(4) }) {
-                Button(onClick = { exportLauncher.launch("CCTV-Plus-Backup.json") }, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { pendingBackupExportAction = { exportLauncher.launch("CCTV-Plus-Backup.json") } }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.UploadFile, null); Spacer(Modifier.width(8.dp))
                     Text(if (S.isRu) "Сохранить в файл" else "Export to File")
                 }
@@ -782,9 +903,11 @@ fun AccordionSettingsScreen(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(onClick = {
-                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(ClipData.newPlainText("CCTVBackup", exportAllSettingsToJson(prefs)))
-                        backupStatus = if (S.isRu) "✅ Скопировано" else "✅ Copied"
+                        pendingBackupExportAction = {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            cm.setPrimaryClip(ClipData.newPlainText("CCTVBackup", exportAllSettingsToJson(prefs)))
+                            backupStatus = if (S.isRu) "✅ Скопировано" else "✅ Copied"
+                        }
                     }, modifier = Modifier.weight(1f)) { Text(if (S.isRu) "Копировать" else "Copy") }
 
                     OutlinedButton(onClick = {
