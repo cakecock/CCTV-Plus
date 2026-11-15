@@ -5,11 +5,24 @@
 
 package com.myiptv.app
 
+import android.Manifest
+import android.app.AlarmManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import android.util.Rational
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -70,6 +83,74 @@ private const val FAV_GROUP_TAG = "__FAV_CATEGORY__"
 private const val EPG_URL_TVLIDER = "http://epg.it999.ru/edem.xml.gz"
 private const val EPG_URL_IPTVX_LITE = "https://iptvx.one/epg/epg_lite.xml.gz"
 private const val EPG_URL_IPTVX_FULL = "https://iptvx.one/epg/epg.xml.gz"
+private const val REMINDER_CHANNEL_ID = "cctv_epg_reminders"
+
+class ReminderReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val channelId = intent.getStringExtra("channel_id").orEmpty()
+        val channelName = intent.getStringExtra("channel_name").orEmpty().ifEmpty { "CCTV Plus" }
+        val programTitle = intent.getStringExtra("program_title").orEmpty().ifEmpty { "Program starting" }
+        val notifId = (channelId.hashCode() * 31 + programTitle.hashCode())
+
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val ch = NotificationChannel(REMINDER_CHANNEL_ID, "EPG Reminders", NotificationManager.IMPORTANCE_HIGH)
+        nm.createNotificationChannel(ch)
+
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            putExtra("open_channel_id", channelId)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val pi = PendingIntent.getActivity(
+            context,
+            notifId,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notif = NotificationCompat.Builder(context, REMINDER_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setContentTitle("📺 $channelName")
+            .setContentText(programTitle)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .build()
+
+        runCatching { nm.notify(notifId, notif) }
+    }
+}
+
+private fun reminderRequestCode(channelId: String, startMs: Long): Int =
+    channelId.hashCode() * 31 + (startMs / 1000L).toInt()
+
+private fun scheduleReminderAlarm(context: Context, rem: ProgramReminder) {
+    if (rem.startMs <= System.currentTimeMillis()) return
+    val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    val intent = Intent(context, ReminderReceiver::class.java).apply {
+        putExtra("channel_id", rem.channelId)
+        putExtra("channel_name", rem.channelName)
+        putExtra("program_title", rem.programTitle)
+    }
+    val pi = PendingIntent.getBroadcast(
+        context,
+        reminderRequestCode(rem.channelId, rem.startMs),
+        intent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    runCatching { am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, rem.startMs, pi) }
+}
+
+private fun cancelReminderAlarm(context: Context, rem: ProgramReminder) {
+    val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    val intent = Intent(context, ReminderReceiver::class.java)
+    val pi = PendingIntent.getBroadcast(
+        context,
+        reminderRequestCode(rem.channelId, rem.startMs),
+        intent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    runCatching { am.cancel(pi) }
+}
 
 fun findChannelSchedule(ch: Channel, epgMap: Map<String, List<EpgProgramItem>>): List<EpgProgramItem> {
     if (epgMap.isEmpty()) return emptyList()
@@ -156,6 +237,13 @@ fun PlayerActionPill(text: String, accentColor: Color = Color.White, onClick: ()
 class MainActivity : ComponentActivity() {
     private var isInPipModeState by mutableStateOf(false)
     private var autoPipAllowed = false
+    private var pendingOpenChannelId by mutableStateOf<String?>(null)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingOpenChannelId = intent.getStringExtra("open_channel_id")
+    }
 
     fun triggerPipMode() {
         runCatching {
@@ -179,6 +267,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pendingOpenChannelId = intent?.getStringExtra("open_channel_id")
         val prefs = getSharedPreferences("cctv_plus_prefs", Context.MODE_PRIVATE)
 
         runCatching {
@@ -238,7 +327,9 @@ class MainActivity : ComponentActivity() {
             var favoriteIds by remember { mutableStateOf(prefs.getStringSet("favs", emptySet())?.toSet() ?: emptySet()) }
             var currentTab by remember { mutableStateOf(0) }
             var isLoading by remember { mutableStateOf(false) }
+            var playlistErrorText by remember { mutableStateOf<String?>(null) }
             var vportalDiagnostic by remember { mutableStateOf("") }
+            val notifPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
             var currentChannel by remember { mutableStateOf<Channel?>(null) }
             var previousChannel by remember { mutableStateOf<Channel?>(null) }
@@ -342,7 +433,11 @@ class MainActivity : ComponentActivity() {
                     .apply()
             }
 
-            fun loadEpgWithStatus(embeddedOverride: String? = detectedPlaylistEpgUrl, forceRefresh: Boolean = false) {
+            fun loadEpgWithStatus(
+                embeddedOverride: String? = detectedPlaylistEpgUrl,
+                forceRefresh: Boolean = false,
+                channelsSnapshot: List<Channel> = channels
+            ) {
                 val customSelected = epgSources.find { it.id == selectedEpgId }?.url
                 val effectiveEmbedded = if (usePlaylistEpg) embeddedOverride?.takeIf { it.isNotBlank() } else null
                 val candidateUrls = when (selectedEpgId) {
@@ -353,6 +448,17 @@ class MainActivity : ComponentActivity() {
                     else -> listOfNotNull(customSelected?.takeIf { it.isNotBlank() }, effectiveEmbedded, EPG_URL_IPTVX_LITE, EPG_URL_TVLIDER)
                 }.distinct()
 
+                val allowedKeys = channelsSnapshot.flatMap { ch ->
+                    buildList {
+                        ch.epgId?.takeIf { it.isNotBlank() }?.let { id ->
+                            add(id.lowercase())
+                            normalizeChannelKey(id).takeIf { it.isNotEmpty() }?.let(::add)
+                        }
+                        add(ch.name.trim().lowercase())
+                        normalizeChannelKey(ch.name).takeIf { it.isNotEmpty() }?.let(::add)
+                    }
+                }.toSet()
+
                 epgLoadJob?.cancel()
                 epgLoadJob = scope.launch {
                     isEpgLoading = true
@@ -361,21 +467,22 @@ class MainActivity : ComponentActivity() {
                     for (testUrl in candidateUrls) {
                         usedUrl = maskUrlForDisplay(testUrl)
                         epgStatusText = "⏳ $usedUrl ..."
-                        val loaded = NetworkLoader.loadFullEpgSchedule(testUrl.trim(), archiveDays, epgOffsetHours, this@MainActivity, forceRefresh)
+                        val loaded = NetworkLoader.loadFullEpgSchedule(
+                            testUrl.trim(), archiveDays, epgOffsetHours, this@MainActivity, forceRefresh, allowedKeys
+                        )
                         if (loaded.isNotEmpty()) { finalSchedule = loaded; break }
                     }
                     epgScheduleMap = finalSchedule; isEpgLoading = false
                     val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                    val matchedCount = channels.count { findChannelSchedule(it, finalSchedule).isNotEmpty() }
+                    val matchedCount = channelsSnapshot.count { findChannelSchedule(it, finalSchedule).isNotEmpty() }
                     epgStatusText = if (finalSchedule.isNotEmpty()) {
-                        if (isRu) "✅ $timeStr ($usedUrl)\nКаналов с EPG: $matchedCount / ${channels.size} (${archiveDays}д, сдвиг ${epgOffsetHours}ч)"
-                        else "✅ $timeStr ($usedUrl)\nMatched EPG: $matchedCount / ${channels.size} (${archiveDays}d, shift ${epgOffsetHours}h)"
+                        if (isRu) "✅ $timeStr ($usedUrl)\nКаналов с EPG: $matchedCount / ${channelsSnapshot.size} (${archiveDays}д, сдвиг ${epgOffsetHours}ч)"
+                        else "✅ $timeStr ($usedUrl)\nMatched EPG: $matchedCount / ${channelsSnapshot.size} (${archiveDays}d, shift ${epgOffsetHours}h)"
                     } else {
                         if (isRu) "⚠️ EPG не загружен ($timeStr)" else "⚠️ EPG not loaded ($timeStr)"
                     }
                 }
             }
-
             fun reloadAllData(forceRefresh: Boolean = false) {
                 persistLists()
                 scope.launch {
@@ -402,10 +509,11 @@ class MainActivity : ComponentActivity() {
                         loadedChannels.addAll(stCh); loadedVod.addAll(stVod)
                     }
                     channels = loadedChannels; vodItems = loadedVod
+                    playlistErrorText = if (loadedChannels.isEmpty() && activePlaylist != null) NetworkLoader.lastM3uError else null
                     val stillValid = currentChannel?.let { cur -> loadedChannels.find { it.id == cur.id || it.streamUrl == cur.streamUrl } }
                     currentChannel = stillValid ?: loadedChannels.firstOrNull { isChannelAllowed(it, parentalEnabled, adultUnlockedSession) }
                     isLoading = false
-                    loadEpgWithStatus(embeddedEpg, forceRefresh)
+                    loadEpgWithStatus(embeddedEpg, forceRefresh, loadedChannels)
                 }
             }
 
@@ -481,10 +589,21 @@ class MainActivity : ComponentActivity() {
                 selectChannelWithPinCheck(list[(curIdx + step + list.size) % list.size])
             }
 
-            fun toggleReminderFor(ch: Channel, prog: EpgProgramItem) {
-                val exists = reminders.any { it.channelId == ch.id && it.startMs == prog.startMs }
-                val updated = if (exists) reminders.filterNot { it.channelId == ch.id && it.startMs == prog.startMs }
-                else reminders + ProgramReminder("${ch.id}_${prog.startMs}", ch.id, ch.name, prog.title, prog.startMs)
+           fun toggleReminderFor(ch: Channel, prog: EpgProgramItem) {
+                val existing = reminders.find { it.channelId == ch.id && it.startMs == prog.startMs }
+                val updated = if (existing != null) {
+                    cancelReminderAlarm(this@MainActivity, existing)
+                    reminders.filterNot { it.channelId == ch.id && it.startMs == prog.startMs }
+                } else {
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                    val newRem = ProgramReminder("${ch.id}_${prog.startMs}", ch.id, ch.name, prog.title, prog.startMs)
+                    scheduleReminderAlarm(this@MainActivity, newRem)
+                    reminders + newRem
+                }
                 reminders = updated
                 saveRemindersToPrefs(prefs, updated)
             }
@@ -576,6 +695,14 @@ class MainActivity : ComponentActivity() {
                 if (!isFirstLaunch && (playlists.isNotEmpty() || vportalUrl.isNotBlank() || stalkerUrl.isNotBlank())) {
                     reloadAllData(forceRefresh = false)
                 }
+            }
+
+            LaunchedEffect(channels, pendingOpenChannelId) {
+                val targetId = pendingOpenChannelId ?: return@LaunchedEffect
+                val targetCh = channels.find { it.id == targetId } ?: return@LaunchedEffect
+                pendingOpenChannelId = null
+                currentTab = 0
+                selectChannelWithPinCheck(targetCh)
             }
 
             val colorScheme = if (themePalette.isDark) {
@@ -709,6 +836,7 @@ class MainActivity : ComponentActivity() {
                                             if (code in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9) { digitBuffer += (code - KeyEvent.KEYCODE_0).toString(); return@onPreviewKeyEvent true }
                                             if (code == KeyEvent.KEYCODE_CHANNEL_UP || code == KeyEvent.KEYCODE_MEDIA_NEXT) { zapChannelStep(1); return@onPreviewKeyEvent true }
                                             if (code == KeyEvent.KEYCODE_CHANNEL_DOWN || code == KeyEvent.KEYCODE_MEDIA_PREVIOUS) { zapChannelStep(-1); return@onPreviewKeyEvent true }
+                                            if (code == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) { showPlayerQuickMenu = !showPlayerQuickMenu; return@onPreviewKeyEvent true }
                                         }
                                         false
                                     }
