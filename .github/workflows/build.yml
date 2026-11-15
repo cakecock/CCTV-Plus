@@ -338,7 +338,7 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
         run: |
-          gradle assembleRelease -x lintVitalRelease -x lintVitalAnalyzeRelease --no-daemon --console=plain
+          gradle assembleRelease --no-daemon --console=plain
           cp app/build/outputs/apk/release/app-release.apk /tmp/CCTV-Plus.apk
           sha256sum /tmp/CCTV-Plus.apk | awk '{print $1}' > /tmp/CCTV-Plus.apk.sha256
           rm -f /tmp/release.jks
