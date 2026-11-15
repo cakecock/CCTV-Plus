@@ -897,7 +897,7 @@ fun MultiViewScreenOverlay(
 @Composable
 fun ParentalPinDialog(S: Strings, theme: AppThemePalette, expectedPin: String, onSuccess: () -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("iptv_prefs", Context.MODE_PRIVATE) }
+    val prefs = remember { context.getSharedPreferences("cctv_plus_prefs", Context.MODE_PRIVATE) }
     var entered by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
     var failedAttempts by remember { mutableIntStateOf(0) }
