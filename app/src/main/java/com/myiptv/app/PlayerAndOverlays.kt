@@ -126,7 +126,8 @@ fun SmartVideoPlayer(
     showQualitySelectorDialog: Boolean = false,
     onDismissQualitySelector: () -> Unit = {},
     enableDoubleTapSeek: Boolean = false,
-    onDoubleTapSeekDelta: ((Long) -> Unit)? = null
+    onDoubleTapSeekDelta: ((Long) -> Unit)? = null,
+    onPlaybackStopped: ((posMs: Long, durMs: Long) -> Unit)? = null
 ) {
     if (playerEngine == 1) {
         NativeAndroidVideoPlayer(
@@ -165,7 +166,8 @@ fun SmartVideoPlayer(
             showQualitySelectorDialog = showQualitySelectorDialog,
             onDismissQualitySelector = onDismissQualitySelector,
             enableDoubleTapSeek = enableDoubleTapSeek && !isPipMode,
-            onDoubleTapSeekDelta = onDoubleTapSeekDelta
+            onDoubleTapSeekDelta = onDoubleTapSeekDelta,
+            onPlaybackStopped = onPlaybackStopped
         )
     }
 }
@@ -187,6 +189,7 @@ fun NativeAndroidVideoPlayer(
     var resolvedUrl by remember(streamUrl) { mutableStateOf("") }
     var reloadTrigger by remember { mutableIntStateOf(0) }
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
+    var attachedController by remember { mutableStateOf<Boolean?>(null) }
 
     LaunchedEffect(streamUrl, reloadTrigger) {
         hasError = false
@@ -204,7 +207,19 @@ fun NativeAndroidVideoPlayer(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching {
+                videoViewRef?.stopPlayback()
+                videoViewRef?.setVideoURI(null)
+            }
+            videoViewRef = null
+        }
     }
 
     Box(modifier = modifier.background(Color.Black)) {
@@ -219,12 +234,15 @@ fun NativeAndroidVideoPlayer(
             update = { view ->
                 videoViewRef = view
                 view.keepScreenOn = true
-                if (useNativeController && view.tag != "mc_$resolvedUrl") {
-                    val mc = MediaController(context)
-                    mc.setAnchorView(view)
-                    view.setMediaController(mc)
-                } else if (!useNativeController) {
-                    view.setMediaController(null)
+                if (attachedController != useNativeController) {
+                    attachedController = useNativeController
+                    if (useNativeController) {
+                        val mc = MediaController(context)
+                        mc.setAnchorView(view)
+                        view.setMediaController(mc)
+                    } else {
+                        view.setMediaController(null)
+                    }
                 }
                 val expectedKey = "$resolvedUrl#$reloadTrigger"
                 if (resolvedUrl.isNotBlank() && view.tag != expectedKey) {
@@ -296,7 +314,8 @@ fun ExoVideoPlayer(
     showQualitySelectorDialog: Boolean = false,
     onDismissQualitySelector: () -> Unit = {},
     enableDoubleTapSeek: Boolean = false,
-    onDoubleTapSeekDelta: ((Long) -> Unit)? = null
+    onDoubleTapSeekDelta: ((Long) -> Unit)? = null,
+    onPlaybackStopped: ((posMs: Long, durMs: Long) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -320,6 +339,7 @@ fun ExoVideoPlayer(
     val curOnQuality by rememberUpdatedState(onVideoQualityDetected)
     val curOnProgress by rememberUpdatedState(onPlaybackProgress)
     val curOnDoubleTapSeek by rememberUpdatedState(onDoubleTapSeekDelta)
+    val curOnStopped by rememberUpdatedState(onPlaybackStopped)
     val scope = rememberCoroutineScope()
 
     val mediaAudioAttributes = remember {
@@ -559,6 +579,11 @@ fun ExoVideoPlayer(
         }
         exoPlayer.addListener(listener)
         onDispose {
+            val dur = exoPlayer.duration
+            val pos = exoPlayer.currentPosition
+            if (dur > 30_000L && pos > 5_000L) {
+                curOnStopped?.invoke(pos, dur)
+            }
             retryJob?.cancel()
             exoPlayer.removeListener(listener)
             exoPlayer.release()
@@ -900,7 +925,8 @@ fun TiviMateTvOverlay(
     currentChannel: Channel?, onSelectChannel: (Channel) -> Unit,
     onPlayArchive: (Channel, EpgProgramItem) -> Unit, onToggleReminder: (Channel, EpgProgramItem) -> Unit, onClose: () -> Unit,
     parentalEnabled: Boolean = false, adultUnlockedSession: Boolean = false,
-    lockedGroups: Set<String> = emptySet()
+    lockedGroups: Set<String> = emptySet(),
+    archiveDays: Int = 3
 ) {
     val visibleChannels = remember(channels, hiddenGroups, parentalEnabled, adultUnlockedSession, lockedGroups) {
         channels.filter { !hiddenGroups.contains(it.group) && isChannelAllowed(it, parentalEnabled, adultUnlockedSession, lockedGroups) }
@@ -912,7 +938,12 @@ fun TiviMateTvOverlay(
         mutableStateOf(currentChannel?.takeIf { isChannelAllowed(it, parentalEnabled, adultUnlockedSession, lockedGroups) } ?: visibleChannels.firstOrNull())
     }
     val previewSchedule = remember(previewChannel, epgScheduleMap) { previewChannel?.let { findChannelSchedule(it, epgScheduleMap) } ?: emptyList() }
-    val now = System.currentTimeMillis()
+    val now by produceState(initialValue = System.currentTimeMillis()) {
+        while (true) {
+            delay(30_000L)
+            value = System.currentTimeMillis()
+        }
+    }
     val epgListState = rememberLazyListState()
 
     LaunchedEffect(previewChannel, previewSchedule) {
@@ -964,7 +995,8 @@ fun TiviMateTvOverlay(
                     LazyColumn(state = epgListState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(previewSchedule) { prog ->
                             val isPast = prog.stopMs < now; val isNow = now in prog.startMs..prog.stopMs; val isFuture = prog.startMs > now
-                            val canArchive = isPast && (previewChannel?.catchupDays ?: 0) > 0
+                            val canArchive = isPast && (previewChannel?.catchupDays ?: 0) > 0 &&
+                                previewChannel?.let { isArchiveProgramAvailable(it, prog, archiveDays, now) } == true
                             val hasReminder = isFuture && reminders.any { it.channelId == previewChannel?.id && it.startMs == prog.startMs }
                             Column(
                                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (isNow) theme.selectedCard else Color(0x66000000))
@@ -1068,33 +1100,30 @@ fun ParentalPinDialog(S: Strings, theme: AppThemePalette, expectedPin: String, o
     val prefs = remember { context.getSharedPreferences("cctv_plus_prefs", Context.MODE_PRIVATE) }
     var entered by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
-    var failedAttempts by remember { mutableIntStateOf(0) }
-    var lockedUntilMs by remember { mutableLongStateOf(0L) }
-    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var secondsLeft by remember { mutableLongStateOf(getPinLockoutSecondsLeft(prefs)) }
 
-    LaunchedEffect(lockedUntilMs) {
-        while (lockedUntilMs > System.currentTimeMillis()) {
-            nowMs = System.currentTimeMillis()
+    LaunchedEffect(secondsLeft > 0L) {
+        while (secondsLeft > 0L) {
             delay(500L)
+            secondsLeft = getPinLockoutSecondsLeft(prefs)
         }
-        nowMs = System.currentTimeMillis()
     }
 
-    val secondsLeft = ((lockedUntilMs - nowMs) / 1000L).coerceAtLeast(0L)
-
     fun submit() {
-        if (secondsLeft > 0L) return
+        val curLock = getPinLockoutSecondsLeft(prefs)
+        if (curLock > 0L) {
+            secondsLeft = curLock
+            return
+        }
         val ok = verifyParentalPin(prefs, entered) || (expectedPin.isNotBlank() && !hasCustomParentalPin(prefs) && entered == expectedPin)
         if (ok) {
+            resetPinFailedAttempts(prefs)
             onSuccess()
         } else {
             error = true
-            failedAttempts += 1
             entered = ""
-            if (failedAttempts >= 5) {
-                lockedUntilMs = System.currentTimeMillis() + 15_000L
-                failedAttempts = 0
-            }
+            recordPinFailedAttempt(prefs)
+            secondsLeft = getPinLockoutSecondsLeft(prefs)
         }
     }
 
