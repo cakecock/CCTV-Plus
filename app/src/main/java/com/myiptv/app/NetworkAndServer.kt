@@ -68,6 +68,8 @@ object NetworkLoader {
     private val stalkerTokenCache = ConcurrentHashMap<String, CachedStalkerToken>()
     @Volatile var lastM3uError: String? = null
         private set
+    @Volatile var lastStalkerError: String? = null
+        private set
 
     fun parseVPortalCredentials(rawUrl: String): Pair<String, String> {
         val key = keyExtractRegex.find(rawUrl)?.groupValues?.get(1)?.trim() ?: ""
@@ -446,6 +448,7 @@ object NetworkLoader {
     suspend fun loadStalkerFull(portalUrl: String, mac: String): Pair<List<Channel>, List<VodMovie>> = withContext(Dispatchers.IO) {
         val channels = mutableListOf<Channel>()
         val movies = mutableListOf<VodMovie>()
+        lastStalkerError = null
         runCatching {
             val base = normalizeStalkerBase(portalUrl)
             val cookie = "mac=${java.net.URLEncoder.encode(mac, "UTF-8")}; stb_lang=ru; timezone=Europe/Moscow"
@@ -509,7 +512,14 @@ object NetworkLoader {
                     }
                     if (loadedOnPage == 0) break
                 }
+            } else {
+                lastStalkerError = "Stalker handshake failed (check URL or MAC)"
             }
+        }.onFailure { err ->
+            lastStalkerError = err.localizedMessage ?: "Stalker connection error"
+        }
+        if (channels.isNotEmpty() || movies.isNotEmpty()) {
+            lastStalkerError = null
         }
         channels to movies
     }
