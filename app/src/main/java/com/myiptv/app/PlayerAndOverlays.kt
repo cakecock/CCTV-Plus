@@ -64,9 +64,11 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.net.URI
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -1098,8 +1100,10 @@ fun MultiViewScreenOverlay(
 fun ParentalPinDialog(S: Strings, theme: AppThemePalette, expectedPin: String, onSuccess: () -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("cctv_plus_prefs", Context.MODE_PRIVATE) }
+    val scope = rememberCoroutineScope()
     var entered by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
+    var isVerifying by remember { mutableStateOf(false) }
     var secondsLeft by remember { mutableLongStateOf(getPinLockoutSecondsLeft(prefs)) }
 
     LaunchedEffect(secondsLeft > 0L) {
@@ -1110,20 +1114,26 @@ fun ParentalPinDialog(S: Strings, theme: AppThemePalette, expectedPin: String, o
     }
 
     fun submit() {
+        if (isVerifying) return
         val curLock = getPinLockoutSecondsLeft(prefs)
         if (curLock > 0L) {
             secondsLeft = curLock
             return
         }
-        val ok = verifyParentalPin(prefs, entered) || (expectedPin.isNotBlank() && !hasCustomParentalPin(prefs) && entered == expectedPin)
-        if (ok) {
-            resetPinFailedAttempts(prefs)
-            onSuccess()
-        } else {
-            error = true
-            entered = ""
-            recordPinFailedAttempt(prefs)
-            secondsLeft = getPinLockoutSecondsLeft(prefs)
+        val pinToCheck = entered
+        isVerifying = true
+        scope.launch {
+            val ok = withContext(Dispatchers.Default) { verifyParentalPin(prefs, pinToCheck) }
+            isVerifying = false
+            if (ok) {
+                resetPinFailedAttempts(prefs)
+                onSuccess()
+            } else {
+                error = true
+                entered = ""
+                withContext(Dispatchers.Default) { recordPinFailedAttempt(prefs) }
+                secondsLeft = getPinLockoutSecondsLeft(prefs)
+            }
         }
     }
 
@@ -1138,7 +1148,7 @@ fun ParentalPinDialog(S: Strings, theme: AppThemePalette, expectedPin: String, o
                     label = { Text(if (S.isRu) "Введите PIN" else "Enter PIN") },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
-                    enabled = secondsLeft == 0L,
+                    enabled = secondsLeft == 0L && !isVerifying,
                     modifier = Modifier.fillMaxWidth()
                 )
                 if (secondsLeft > 0L) {
@@ -1151,7 +1161,7 @@ fun ParentalPinDialog(S: Strings, theme: AppThemePalette, expectedPin: String, o
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(onClick = onDismiss) { Text(if (S.isRu) "Отмена" else "Cancel") }
-                    Button(onClick = { submit() }, enabled = secondsLeft == 0L && entered.isNotEmpty()) { Text("OK") }
+                    Button(onClick = { submit() }, enabled = secondsLeft == 0L && entered.isNotEmpty() && !isVerifying) { Text("OK") }
                 }
             }
         }
