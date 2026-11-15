@@ -28,25 +28,20 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Lock Permanent Digital Signature
+      - name: Prepare Release Keystore from Secrets
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
         run: |
-          if [ ! -f cctv_permanent.keystore ]; then
-            keytool -genkeypair -v -keystore cctv_permanent.keystore \
-              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass android -keypass android \
-              -dname "CN=CCTV Plus,O=Android,C=RU"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            for i in 1 2 3; do
-              git pull --rebase origin main || git pull --rebase origin master || true
-              git add cctv_permanent.keystore
-              git commit -m "Lock permanent keystore signature [skip ci]" || true
-              git push && break
-              sleep 2
-            done
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASS" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASS" ]; then
+            echo "::error::Missing signing secrets (ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASS, ANDROID_KEY_ALIAS, ANDROID_KEY_PASS)"
+            exit 1
           fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > /tmp/release.jks
 
-      - name: Prepare Custom Icon, Manifest and Gradle Configs
+      - name: Prepare Custom Icon, Banner, Manifest and Gradle Configs
         run: |
           mkdir -p app/src/main/res/xml
           mkdir -p app/src/main/res/drawable
@@ -84,6 +79,39 @@ jobs:
           </vector>
           EOF
 
+          cat << 'EOF' > app/src/main/res/drawable/tv_banner.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="320dp"
+              android:height="180dp"
+              android:viewportWidth="320"
+              android:viewportHeight="180">
+              <path
+                  android:fillColor="#121417"
+                  android:pathData="M0,0h320v180h-320z"/>
+              <path
+                  android:fillColor="#1C242B"
+                  android:strokeColor="#10B981"
+                  android:strokeWidth="4"
+                  android:pathData="M34,30 C34,23 39,18 46,18 L274,18 C281,18 286,23 286,30 L286,136 C286,143 281,148 274,148 L46,148 C39,148 34,143 34,136 Z"/>
+              <path
+                  android:fillColor="#10B981"
+                  android:pathData="M148,148 L172,148 L172,158 L148,158 Z"/>
+              <path
+                  android:fillColor="#10B981"
+                  android:pathData="M118,158 L202,158 L212,167 L108,167 Z"/>
+              <path
+                  android:fillColor="#10B981"
+                  android:pathData="M138,54 L138,112 L190,83 Z"/>
+              <path
+                  android:fillColor="#F59E0B"
+                  android:pathData="M242,32 L250,32 L250,60 L242,60 Z"/>
+              <path
+                  android:fillColor="#F59E0B"
+                  android:pathData="M232,42 L260,42 L260,50 L232,50 Z"/>
+          </vector>
+          EOF
+
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -101,7 +129,7 @@ jobs:
                   android:dataExtractionRules="@xml/data_extraction_rules"
                   android:icon="@drawable/ic_cctv_launcher"
                   android:roundIcon="@drawable/ic_cctv_launcher"
-                  android:banner="@drawable/ic_cctv_launcher"
+                  android:banner="@drawable/tv_banner"
                   android:label="CCTV Plus"
                   android:supportsRtl="true"
                   android:usesCleartextTraffic="true"
@@ -229,10 +257,10 @@ jobs:
 
               signingConfigs {
                   create("releaseSign") {
-                      storeFile = rootProject.file("cctv_permanent.keystore")
-                      storePassword = "android"
-                      keyAlias = "androiddebugkey"
-                      keyPassword = "android"
+                      storeFile = file("/tmp/release.jks")
+                      storePassword = System.getenv("ANDROID_KEYSTORE_PASS")
+                      keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                      keyPassword = System.getenv("ANDROID_KEY_PASS")
                       enableV1Signing = true
                       enableV2Signing = true
                   }
@@ -297,10 +325,15 @@ jobs:
           gradle-version: '8.7'
 
       - name: Build Signed Release APK
+        env:
+          ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
         run: |
           gradle assembleRelease --no-daemon
           cp app/build/outputs/apk/release/app-release.apk /tmp/CCTV-Plus.apk
           sha256sum /tmp/CCTV-Plus.apk | awk '{print $1}' > /tmp/CCTV-Plus.apk.sha256
+          rm -f /tmp/release.jks
 
       - name: Upload Ready APK to Artifacts
         uses: actions/upload-artifact@v4
@@ -329,15 +362,14 @@ jobs:
             gh release delete "$TAG" --repo "${{ github.repository }}" --yes --cleanup-tag || true
           done
 
-      - name: Save APK and Version Directly to Repository
+      - name: Save Version Metadata to Repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -- .
           git pull --rebase origin main || git pull --rebase origin master || true
-          cp /tmp/CCTV-Plus.apk ./CCTV-Plus.apk
           APK_SHA256=$(cat /tmp/CCTV-Plus.apk.sha256)
           printf '{"tag_name":"v2.0.%s","version_code":%s,"repo":"%s","sha256":"%s"}\n' "${{ github.run_number }}" "${{ github.run_number }}" "${{ github.repository }}" "$APK_SHA256" > version.json
-          git add -f CCTV-Plus.apk version.json
-          git commit -m "Publish CCTV-Plus.apk v2.0.${{ github.run_number }} [skip ci]" || true
+          git add version.json
+          git commit -m "Update version.json v2.0.${{ github.run_number }} [skip ci]" || true
           git push || true
