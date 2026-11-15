@@ -1247,6 +1247,7 @@ fun LiveTvScreen(
                     Spacer(Modifier.height(16.dp))
                     Button(onClick = onOpenSettings) { Text(S.goToSettings) }
                 }
+            }
             return
         }
 
