@@ -96,7 +96,7 @@ jobs:
               <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
               <application
-                  android:allowBackup="true"
+                  android:allowBackup="false"
                   android:icon="@drawable/ic_cctv_launcher"
                   android:roundIcon="@drawable/ic_cctv_launcher"
                   android:banner="@drawable/ic_cctv_launcher"
@@ -108,7 +108,7 @@ jobs:
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
-                      android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+                      android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
                       android:supportsPictureInPicture="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
@@ -261,6 +261,7 @@ jobs:
         run: |
           gradle assembleRelease --no-daemon
           cp app/build/outputs/apk/release/app-release.apk /tmp/CCTV-Plus.apk
+          sha256sum /tmp/CCTV-Plus.apk | awk '{print $1}' > /tmp/CCTV-Plus.apk.sha256
 
       - name: Upload Ready APK to Artifacts
         uses: actions/upload-artifact@v4
@@ -275,7 +276,9 @@ jobs:
           name: "CCTV Plus v2.0.${{ github.run_number }}"
           body: "CCTV Plus v2.0 (Build #${{ github.run_number }})"
           make_latest: true
-          files: /tmp/CCTV-Plus.apk
+          files: |
+            /tmp/CCTV-Plus.apk
+            /tmp/CCTV-Plus.apk.sha256
 
       - name: Save APK and Version Directly to Repository
         run: |
@@ -284,7 +287,8 @@ jobs:
           git checkout -- .
           git pull --rebase origin main || git pull --rebase origin master || true
           cp /tmp/CCTV-Plus.apk ./CCTV-Plus.apk
-          printf '{"tag_name":"v2.0.%s","version_code":%s,"repo":"%s"}\n' "${{ github.run_number }}" "${{ github.run_number }}" "${{ github.repository }}" > version.json
+          APK_SHA256=$(cat /tmp/CCTV-Plus.apk.sha256)
+          printf '{"tag_name":"v2.0.%s","version_code":%s,"repo":"%s","sha256":"%s"}\n' "${{ github.run_number }}" "${{ github.run_number }}" "${{ github.repository }}" "$APK_SHA256" > version.json
           git add -f CCTV-Plus.apk version.json
           git commit -m "Publish CCTV-Plus.apk v2.0.${{ github.run_number }} [skip ci]" || true
           git push || true
