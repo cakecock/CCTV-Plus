@@ -36,12 +36,18 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -57,8 +63,10 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.net.URI
 import kotlin.math.roundToInt
 
 data class AudioTrackOption(
@@ -98,15 +106,23 @@ fun SmartVideoPlayer(
     showAudioSelectorDialog: Boolean = false,
     onDismissAudioSelector: () -> Unit = {},
     onVideoQualityDetected: (String) -> Unit = {},
-    onPlaybackProgress: (posMs: Long, durMs: Long) -> Unit = { _, _ -> }
+    onPlaybackProgress: (posMs: Long, durMs: Long) -> Unit = { _, _ -> },
+    referrer: String? = null,
+    cookie: String? = null,
+    isRu: Boolean = true,
+    isPipMode: Boolean = false,
+    onNextChannel: (() -> Unit)? = null
 ) {
     if (playerEngine == 1) {
         NativeAndroidVideoPlayer(
             streamUrl = streamUrl,
-            useNativeController = useNativeController,
+            useNativeController = useNativeController && !isPipMode,
             isMuted = isMuted,
             reconnectingText = reconnectingText,
-            modifier = modifier
+            modifier = modifier,
+            isRu = isRu,
+            isPipMode = isPipMode,
+            onNextChannel = onNextChannel
         )
     } else {
         ExoVideoPlayer(
@@ -114,18 +130,23 @@ fun SmartVideoPlayer(
             userAgent = userAgent,
             resizeMode = resizeMode,
             bufferMode = bufferMode,
-            useNativeController = useNativeController,
+            useNativeController = useNativeController && !isPipMode,
             reconnectingText = reconnectingText,
             modifier = modifier,
             isMuted = isMuted,
-            enableSwipeGestures = enableSwipeGestures,
+            enableSwipeGestures = enableSwipeGestures && !isPipMode,
             playbackSpeed = playbackSpeed,
             initialSeekMs = initialSeekMs,
             seekCommand = seekCommand,
             showAudioSelectorDialog = showAudioSelectorDialog,
             onDismissAudioSelector = onDismissAudioSelector,
             onVideoQualityDetected = onVideoQualityDetected,
-            onPlaybackProgress = onPlaybackProgress
+            onPlaybackProgress = onPlaybackProgress,
+            referrer = referrer,
+            cookie = cookie,
+            isRu = isRu,
+            isPipMode = isPipMode,
+            onNextChannel = onNextChannel
         )
     }
 }
@@ -136,13 +157,35 @@ fun NativeAndroidVideoPlayer(
     useNativeController: Boolean,
     isMuted: Boolean,
     reconnectingText: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isRu: Boolean = true,
+    isPipMode: Boolean = false,
+    onNextChannel: (() -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     var hasError by remember(streamUrl) { mutableStateOf(false) }
     var resolvedUrl by remember(streamUrl) { mutableStateOf("") }
+    var reloadTrigger by remember { mutableIntStateOf(0) }
+    var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
 
-    LaunchedEffect(streamUrl) {
+    LaunchedEffect(streamUrl, reloadTrigger) {
+        hasError = false
         resolvedUrl = if (streamUrl.isNotBlank()) NetworkLoader.resolveStalkerStreamIfNeeded(streamUrl) else ""
+    }
+
+    DisposableEffect(lifecycleOwner, videoViewRef) {
+        val observer = LifecycleEventObserver { _, event ->
+            val vv = videoViewRef ?: return@LifecycleEventObserver
+            val inPip = (context as? Activity)?.isInPictureInPictureMode == true
+            when (event) {
+                Lifecycle.Event.ON_STOP -> if (!inPip && vv.isPlaying) vv.pause()
+                Lifecycle.Event.ON_START -> if (!vv.isPlaying && resolvedUrl.isNotBlank() && !hasError) runCatching { vv.start() }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     Box(modifier = modifier.background(Color.Black)) {
@@ -151,17 +194,22 @@ fun NativeAndroidVideoPlayer(
                 VideoView(ctx).apply {
                     keepScreenOn = true
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                    if (useNativeController) {
-                        val mc = MediaController(ctx)
-                        mc.setAnchorView(this)
-                        setMediaController(mc)
-                    }
+                    videoViewRef = this
                 }
             },
             update = { view ->
+                videoViewRef = view
                 view.keepScreenOn = true
-                if (resolvedUrl.isNotBlank() && view.tag != resolvedUrl) {
-                    view.tag = resolvedUrl
+                if (useNativeController && view.tag != "mc_$resolvedUrl") {
+                    val mc = MediaController(context)
+                    mc.setAnchorView(view)
+                    view.setMediaController(mc)
+                } else if (!useNativeController) {
+                    view.setMediaController(null)
+                }
+                val expectedKey = "$resolvedUrl#$reloadTrigger"
+                if (resolvedUrl.isNotBlank() && view.tag != expectedKey) {
+                    view.tag = expectedKey
                     hasError = false
                     view.setOnPreparedListener { mp ->
                         val vol = if (isMuted) 0f else 1f
@@ -174,9 +222,30 @@ fun NativeAndroidVideoPlayer(
             },
             modifier = Modifier.fillMaxSize()
         )
-        if (hasError) {
-            Box(modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp).background(Color(0xCC000000), RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                Text(reconnectingText, color = Color(0xFFF59E0B), fontSize = 13.sp)
+        if (hasError && !isPipMode) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color(0xDD121417), RoundedCornerShape(14.dp))
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(if (isRu) "⚠️ Ошибка воспроизведения потока" else "⚠️ Stream playback error", color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { reloadTrigger++ }) {
+                        Text(if (isRu) "Повторить" else "Retry")
+                    }
+                    if (onNextChannel != null) {
+                        OutlinedButton(onClick = onNextChannel) {
+                            Text(if (isRu) "След. канал" else "Next", color = Color.White)
+                        }
+                    }
+                }
+            }
+        } else if (hasError) {
+            Box(modifier = Modifier.align(Alignment.BottomCenter).padding(8.dp).background(Color(0xCC000000), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                Text(reconnectingText, color = Color(0xFFF59E0B), fontSize = 11.sp)
             }
         }
     }
@@ -199,18 +268,38 @@ fun ExoVideoPlayer(
     showAudioSelectorDialog: Boolean = false,
     onDismissAudioSelector: () -> Unit = {},
     onVideoQualityDetected: (String) -> Unit = {},
-    onPlaybackProgress: (posMs: Long, durMs: Long) -> Unit = { _, _ -> }
+    onPlaybackProgress: (posMs: Long, durMs: Long) -> Unit = { _, _ -> },
+    referrer: String? = null,
+    cookie: String? = null,
+    isRu: Boolean = true,
+    isPipMode: Boolean = false,
+    onNextChannel: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
-    var isReconnecting by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var isReconnecting by remember(streamUrl) { mutableStateOf(false) }
+    var fatalErrorMsg by remember(streamUrl) { mutableStateOf<String?>(null) }
+    var retryAttempt by remember(streamUrl) { mutableIntStateOf(0) }
+    var manualRetryTrigger by remember { mutableIntStateOf(0) }
     var gestureHudText by remember { mutableStateOf("") }
     var audioTracks by remember { mutableStateOf<List<AudioTrackOption>>(emptyList()) }
     var didInitialSeek by remember(streamUrl, initialSeekMs) { mutableStateOf(false) }
+    var pendingReconnectSeekMs by remember(streamUrl) { mutableLongStateOf(0L) }
     var detectedRes by remember(streamUrl) { mutableStateOf("") }
     var detectedFps by remember(streamUrl) { mutableStateOf("") }
+    var wasPlayingBeforeStop by remember { mutableStateOf(false) }
+    var retryJob by remember { mutableStateOf<Job?>(null) }
+
     val curOnQuality by rememberUpdatedState(onVideoQualityDetected)
     val curOnProgress by rememberUpdatedState(onPlaybackProgress)
     val scope = rememberCoroutineScope()
+
+    val mediaAudioAttributes = remember {
+        AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+            .build()
+    }
 
     val exoPlayer = remember(bufferMode) {
         val (minBuf, maxBuf, playBuf) = when (bufferMode) {
@@ -221,16 +310,56 @@ fun ExoVideoPlayer(
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(minBuf, maxBuf, playBuf, 2000)
             .build()
-        // Включаем встроенный декодер FFmpeg для AC3 / EAC3 / DTS
         val renderersFactory = DefaultRenderersFactory(context)
             .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
         ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
             .build()
-            .apply { playWhenReady = true }
+            .apply {
+                setHandleAudioBecomingNoisy(true)
+                playWhenReady = true
+            }
     }
 
-    LaunchedEffect(isMuted, exoPlayer) { exoPlayer.volume = if (isMuted) 0f else 1f }
+    DisposableEffect(enableSwipeGestures, context) {
+        val win = if (enableSwipeGestures) (context as? Activity)?.window else null
+        val savedBrightness = win?.attributes?.screenBrightness ?: -1f
+        onDispose {
+            if (win != null) {
+                val lp = win.attributes
+                lp.screenBrightness = savedBrightness
+                win.attributes = lp
+            }
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, exoPlayer) {
+        val observer = LifecycleEventObserver { _, event ->
+            val inPip = (context as? Activity)?.isInPictureInPictureMode == true
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    if (!inPip) {
+                        wasPlayingBeforeStop = exoPlayer.playWhenReady
+                        exoPlayer.pause()
+                    }
+                }
+                Lifecycle.Event.ON_START -> {
+                    if (wasPlayingBeforeStop) {
+                        wasPlayingBeforeStop = false
+                        exoPlayer.playWhenReady = true
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(isMuted, exoPlayer) {
+        exoPlayer.volume = if (isMuted) 0f else 1f
+        exoPlayer.setAudioAttributes(mediaAudioAttributes, !isMuted)
+    }
     LaunchedEffect(playbackSpeed, exoPlayer) { exoPlayer.setPlaybackSpeed(playbackSpeed) }
     LaunchedEffect(seekCommand) {
         if (seekCommand != null) {
@@ -238,18 +367,42 @@ fun ExoVideoPlayer(
         }
     }
 
-    LaunchedEffect(streamUrl, userAgent, exoPlayer) {
+    LaunchedEffect(streamUrl, userAgent, referrer, cookie, exoPlayer, manualRetryTrigger) {
+        retryJob?.cancel()
+        retryJob = null
         if (streamUrl.isBlank()) return@LaunchedEffect
         isReconnecting = false
+        fatalErrorMsg = null
+        retryAttempt = 0
         curOnQuality("")
         val realUrl = NetworkLoader.resolveStalkerStreamIfNeeded(streamUrl)
-        if (realUrl.isBlank()) return@LaunchedEffect
+        if (realUrl.isBlank()) {
+            fatalErrorMsg = if (isRu) "Не удалось получить ссылку на поток" else "Failed to resolve stream URL"
+            return@LaunchedEffect
+        }
 
         val httpFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(userAgent ?: "Lavf/60.3.100")
+            .setUserAgent(userAgent?.takeIf { it.isNotBlank() } ?: "Lavf/60.3.100")
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(12000)
             .setReadTimeoutMs(15000)
+
+        val headers = mutableMapOf<String, String>()
+        if (!referrer.isNullOrBlank()) {
+            headers["Referer"] = referrer
+            runCatching {
+                val u = URI(referrer)
+                if (!u.scheme.isNullOrBlank() && !u.host.isNullOrBlank()) {
+                    headers["Origin"] = "${u.scheme}://${u.host}"
+                }
+            }
+        }
+        if (!cookie.isNullOrBlank()) {
+            headers["Cookie"] = cookie
+        }
+        if (headers.isNotEmpty()) {
+            httpFactory.setDefaultRequestProperties(headers)
+        }
 
         val mediaSource = DefaultMediaSourceFactory(httpFactory).createMediaSource(MediaItem.fromUri(realUrl))
         exoPlayer.setMediaSource(mediaSource)
@@ -267,19 +420,48 @@ fun ExoVideoPlayer(
     }
 
     DisposableEffect(exoPlayer) {
+        val maxRetries = 3
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                isReconnecting = true
-                scope.launch { delay(2500); exoPlayer.prepare(); exoPlayer.playWhenReady = true }
+                val curDur = exoPlayer.duration
+                val curPos = exoPlayer.currentPosition
+                if (curDur > 30000L && curPos > 5000L) {
+                    pendingReconnectSeekMs = curPos
+                }
+                if (retryAttempt < maxRetries) {
+                    retryAttempt += 1
+                    isReconnecting = true
+                    fatalErrorMsg = null
+                    val delayMs = retryAttempt * 2000L
+                    retryJob?.cancel()
+                    retryJob = scope.launch {
+                        delay(delayMs)
+                        exoPlayer.prepare()
+                        exoPlayer.playWhenReady = true
+                    }
+                } else {
+                    isReconnecting = false
+                    fatalErrorMsg = error.localizedMessage ?: (if (isRu) "Поток недоступен" else "Stream unavailable")
+                }
             }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_READY) {
                     isReconnecting = false
-                    if (!didInitialSeek && initialSeekMs > 5000L) {
-                        didInitialSeek = true; exoPlayer.seekTo(initialSeekMs)
+                    fatalErrorMsg = null
+                    retryAttempt = 0
+                    if (pendingReconnectSeekMs > 5000L) {
+                        val target = pendingReconnectSeekMs
+                        pendingReconnectSeekMs = 0L
+                        didInitialSeek = true
+                        exoPlayer.seekTo(target)
+                    } else if (!didInitialSeek && initialSeekMs > 5000L) {
+                        didInitialSeek = true
+                        exoPlayer.seekTo(initialSeekMs)
                     }
                 }
             }
+
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 val h = videoSize.height
                 if (h > 0) {
@@ -287,14 +469,16 @@ fun ExoVideoPlayer(
                     curOnQuality(listOf(detectedRes, detectedFps).filter { it.isNotBlank() }.joinToString(" • "))
                 }
             }
+
             override fun onTracksChanged(tracks: Tracks) {
                 val list = mutableListOf<AudioTrackOption>()
                 tracks.groups.forEachIndexed { gIdx, group ->
                     if (group.type == C.TRACK_TYPE_AUDIO) {
                         for (tIdx in 0 until group.length) {
                             val fmt = group.getTrackFormat(tIdx)
+                            val fallbackLabel = if (isRu) "Дорожка #${list.size + 1}" else "Track #${list.size + 1}"
                             val title = listOf(fmt.label ?: "", fmt.language?.uppercase() ?: "", if (fmt.channelCount > 0) "${fmt.channelCount}ch" else "")
-                                .filter { it.isNotBlank() }.joinToString(" • ").ifEmpty { "Дорожка #${list.size + 1}" }
+                                .filter { it.isNotBlank() }.joinToString(" • ").ifEmpty { fallbackLabel }
                             list.add(AudioTrackOption(gIdx, tIdx, title, group.isTrackSelected(tIdx)))
                         }
                     } else if (group.type == C.TRACK_TYPE_VIDEO && group.length > 0) {
@@ -310,16 +494,20 @@ fun ExoVideoPlayer(
             }
         }
         exoPlayer.addListener(listener)
-        onDispose { exoPlayer.removeListener(listener); exoPlayer.release() }
+        onDispose {
+            retryJob?.cancel()
+            exoPlayer.removeListener(listener)
+            exoPlayer.release()
+        }
     }
 
     if (showAudioSelectorDialog) {
         Dialog(onDismissRequest = onDismissAudioSelector) {
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1C2026)), shape = RoundedCornerShape(16.dp)) {
                 Column(modifier = Modifier.padding(16.dp).widthIn(min = 260.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("🔊 Выбор звуковой дорожки", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color(0xFF10B981))
+                    Text(if (isRu) "🔊 Выбор звуковой дорожки" else "🔊 Audio Track", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color(0xFF10B981))
                     if (audioTracks.isEmpty()) {
-                        Text("Дополнительные звуковые дорожки не найдены", fontSize = 13.sp, color = Color.LightGray)
+                        Text(if (isRu) "Дополнительные звуковые дорожки не найдены" else "No additional audio tracks found", fontSize = 13.sp, color = Color.LightGray)
                     } else {
                         audioTracks.forEach { opt ->
                             Row(
@@ -340,7 +528,9 @@ fun ExoVideoPlayer(
                             }
                         }
                     }
-                    TextButton(onClick = onDismissAudioSelector, modifier = Modifier.align(Alignment.End)) { Text("Закрыть", color = Color.White) }
+                    TextButton(onClick = onDismissAudioSelector, modifier = Modifier.align(Alignment.End)) {
+                        Text(if (isRu) "Закрыть" else "Close", color = Color.White)
+                    }
                 }
             }
         }
@@ -353,7 +543,7 @@ fun ExoVideoPlayer(
     }
 
     Box(
-        modifier = modifier.pointerInput(enableSwipeGestures) {
+        modifier = modifier.pointerInput(enableSwipeGestures, isRu) {
             if (!enableSwipeGestures) return@pointerInput
             detectVerticalDragGestures(
                 onDragEnd = { gestureHudText = "" },
@@ -368,7 +558,7 @@ fun ExoVideoPlayer(
                             val cur = win.attributes.screenBrightness.let { if (it < 0f) 0.5f else it }
                             val next = (cur + delta).coerceIn(0.05f, 1.0f)
                             val lp = win.attributes; lp.screenBrightness = next; win.attributes = lp
-                            gestureHudText = "☀️ Яркость: ${(next * 100).toInt()}%"
+                            gestureHudText = if (isRu) "☀️ Яркость: ${(next * 100).toInt()}%" else "☀️ Brightness: ${(next * 100).toInt()}%"
                         }
                     } else {
                         val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -376,7 +566,7 @@ fun ExoVideoPlayer(
                         val curV = am.getStreamVolume(AudioManager.STREAM_MUSIC)
                         val nextFloat = ((curV.toFloat() / maxV.toFloat()) + delta).coerceIn(0f, 1f)
                         am.setStreamVolume(AudioManager.STREAM_MUSIC, (nextFloat * maxV).toInt().coerceIn(0, maxV), 0)
-                        gestureHudText = "🔊 Громкость: ${(nextFloat * 100).toInt()}%"
+                        gestureHudText = if (isRu) "🔊 Громкость: ${(nextFloat * 100).toInt()}%" else "🔊 Volume: ${(nextFloat * 100).toInt()}%"
                     }
                 }
             )
@@ -396,14 +586,43 @@ fun ExoVideoPlayer(
             },
             modifier = Modifier.fillMaxSize()
         )
-        if (gestureHudText.isNotEmpty()) {
+        if (gestureHudText.isNotEmpty() && !isPipMode) {
             Box(modifier = Modifier.align(Alignment.Center).background(Color(0xDD000000), RoundedCornerShape(14.dp)).padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text(gestureHudText, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
             }
         }
-        if (isReconnecting) {
+        if (isReconnecting && !isPipMode) {
             Box(modifier = Modifier.align(Alignment.BottomCenter).padding(12.dp).background(Color(0xCC000000), RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                Text(reconnectingText, color = Color(0xFFF59E0B), fontSize = 13.sp)
+                Text("$reconnectingText ($retryAttempt/3)", color = Color(0xFFF59E0B), fontSize = 13.sp)
+            }
+        }
+        val errMsg = fatalErrorMsg
+        if (errMsg != null && !isPipMode) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(16.dp)
+                    .background(Color(0xE6121417), RoundedCornerShape(16.dp))
+                    .border(1.dp, Color(0xFFF59E0B).copy(alpha = 0.5f), RoundedCornerShape(16.dp))
+                    .padding(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    if (isRu) "⚠️ Не удалось подключиться" else "⚠️ Connection failed",
+                    color = Color(0xFFF59E0B), fontWeight = FontWeight.ExtraBold, fontSize = 15.sp
+                )
+                Text(errMsg, color = Color.LightGray, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 2)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = { manualRetryTrigger++ }) {
+                        Text(if (isRu) "🔄 Повторить" else "🔄 Retry", fontWeight = FontWeight.Bold)
+                    }
+                    if (onNextChannel != null) {
+                        OutlinedButton(onClick = onNextChannel) {
+                            Text(if (isRu) "⏭ След. канал" else "⏭ Next Channel", color = Color.White)
+                        }
+                    }
+                }
             }
         }
     }
@@ -493,13 +712,14 @@ fun HiddenCategoriesDialog(
 
 @Composable
 fun SleepTimerDialog(S: Strings, theme: AppThemePalette, currentMinutesLeft: Int, onSelectMinutes: (Int) -> Unit, onDismiss: () -> Unit) {
+    val minLabel = if (S.isRu) "мин" else "min"
     Dialog(onDismissRequest = onDismiss) {
         Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp)) {
             Column(modifier = Modifier.padding(18.dp).widthIn(min = 250.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(if (S.isRu) "⏱ Таймер сна" else "⏱ Sleep Timer", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.primary)
                 if (currentMinutesLeft > 0) Text(if (S.isRu) "Выключение через: $currentMinutesLeft мин" else "Stopping in: ${currentMinutesLeft}m", fontSize = 13.sp, color = theme.text)
                 listOf(0, 15, 30, 60, 90).forEach { mins ->
-                    val label = if (mins == 0) (if (S.isRu) "🚫 Отключить таймер" else "🚫 Turn Off") else "⏱ $mins мин"
+                    val label = if (mins == 0) (if (S.isRu) "🚫 Отключить таймер" else "🚫 Turn Off") else "⏱ $mins $minLabel"
                     OutlinedButton(onClick = { onSelectMinutes(mins); onDismiss() }, modifier = Modifier.fillMaxWidth()) { Text(label, color = theme.text, fontWeight = FontWeight.Bold) }
                 }
             }
@@ -512,13 +732,18 @@ fun TiviMateTvOverlay(
     S: Strings, theme: AppThemePalette, channels: List<Channel>, hiddenGroups: Set<String>,
     epgScheduleMap: Map<String, List<EpgProgramItem>>, reminders: List<ProgramReminder>,
     currentChannel: Channel?, onSelectChannel: (Channel) -> Unit,
-    onPlayArchive: (Channel, EpgProgramItem) -> Unit, onToggleReminder: (Channel, EpgProgramItem) -> Unit, onClose: () -> Unit
+    onPlayArchive: (Channel, EpgProgramItem) -> Unit, onToggleReminder: (Channel, EpgProgramItem) -> Unit, onClose: () -> Unit,
+    parentalEnabled: Boolean = false, adultUnlockedSession: Boolean = false
 ) {
-    val visibleChannels = remember(channels, hiddenGroups) { channels.filterNot { hiddenGroups.contains(it.group) } }
+    val visibleChannels = remember(channels, hiddenGroups, parentalEnabled, adultUnlockedSession) {
+        channels.filter { !hiddenGroups.contains(it.group) && isChannelAllowed(it, parentalEnabled, adultUnlockedSession) }
+    }
     val groups = remember(visibleChannels, S) { listOf(S.allGroups) + visibleChannels.map { it.group }.distinct() }
     var selGroup by remember { mutableStateOf(currentChannel?.group?.takeIf { !hiddenGroups.contains(it) } ?: S.allGroups) }
     val groupChannels = remember(visibleChannels, selGroup, S) { if (selGroup == S.allGroups) visibleChannels else visibleChannels.filter { it.group == selGroup } }
-    var previewChannel by remember(currentChannel) { mutableStateOf(currentChannel ?: visibleChannels.firstOrNull()) }
+    var previewChannel by remember(currentChannel, visibleChannels) {
+        mutableStateOf(currentChannel?.takeIf { isChannelAllowed(it, parentalEnabled, adultUnlockedSession) } ?: visibleChannels.firstOrNull())
+    }
     val previewSchedule = remember(previewChannel, epgScheduleMap) { previewChannel?.let { findChannelSchedule(it, epgScheduleMap) } ?: emptyList() }
     val now = System.currentTimeMillis()
     val epgListState = rememberLazyListState()
@@ -542,7 +767,7 @@ fun TiviMateTvOverlay(
                 }
             }
             Column(modifier = Modifier.weight(1.15f).fillMaxHeight().clip(RoundedCornerShape(12.dp)).background(Color(0xDD141820)).padding(8.dp)) {
-                Text(if (S.isRu) "2. Каналы (${groupChannels.size})" else "2. Channels", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, modifier = Modifier.padding(6.dp))
+                Text(if (S.isRu) "2. Каналы (${groupChannels.size})" else "2. Channels (${groupChannels.size})", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, modifier = Modifier.padding(6.dp))
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(groupChannels, key = { it.id }) { ch ->
                         val isPreview = previewChannel?.id == ch.id
@@ -560,7 +785,8 @@ fun TiviMateTvOverlay(
             }
             Column(modifier = Modifier.weight(1.3f).fillMaxHeight().clip(RoundedCornerShape(12.dp)).background(Color(0xDD141820)).padding(8.dp)) {
                 Row(modifier = Modifier.fillMaxWidth().padding(4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Text("3. ${previewChannel?.name ?: "Гид"}", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, maxLines = 1, modifier = Modifier.weight(1f))
+                    val defaultGuide = if (S.isRu) "Гид" else "Guide"
+                    Text("3. ${previewChannel?.name ?: defaultGuide}", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, maxLines = 1, modifier = Modifier.weight(1f))
                     IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Close, null, tint = Color.White) }
                 }
                 if (previewSchedule.isEmpty()) {
@@ -583,9 +809,9 @@ fun TiviMateTvOverlay(
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text(prog.timeRangeText, fontSize = 11.sp, color = Color.LightGray)
                                     when {
-                                        isNow -> Text("🟢 ЭФИР", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
-                                        canArchive -> Text("⏪ АРХИВ", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B))
-                                        hasReminder -> Text("🔔 НАПОМНЮ", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
+                                        isNow -> Text(if (S.isRu) "🟢 ЭФИР" else "🟢 LIVE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF10B981))
+                                        canArchive -> Text(if (S.isRu) "⏪ АРХИВ" else "⏪ CATCHUP", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B))
+                                        hasReminder -> Text(if (S.isRu) "🔔 НАПОМНЮ" else "🔔 REMIND", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF38BDF8))
                                         isFuture -> Text("🕒", fontSize = 10.sp, color = Color.Gray)
                                     }
                                 }
@@ -600,13 +826,39 @@ fun TiviMateTvOverlay(
 }
 
 @Composable
-fun MultiViewScreenOverlay(S: Strings, theme: AppThemePalette, allChannels: List<Channel>, initialChannel: Channel, playerBufferMode: Int, playerDefaultUa: String, onExitMultiView: (Channel) -> Unit) {
-    var slots by remember { mutableStateOf(listOf(initialChannel, allChannels.getOrNull(1) ?: initialChannel, allChannels.getOrNull(2) ?: initialChannel, allChannels.getOrNull(3) ?: initialChannel)) }
+fun MultiViewScreenOverlay(
+    S: Strings,
+    theme: AppThemePalette,
+    allChannels: List<Channel>,
+    initialChannel: Channel,
+    playerBufferMode: Int,
+    playerDefaultUa: String,
+    onExitMultiView: (Channel) -> Unit,
+    parentalEnabled: Boolean = false,
+    adultUnlockedSession: Boolean = false
+) {
+    val allowedChannels = remember(allChannels, parentalEnabled, adultUnlockedSession) {
+        allChannels.filter { isChannelAllowed(it, parentalEnabled, adultUnlockedSession) }
+    }
+    val safeInitial = remember(initialChannel, allowedChannels, parentalEnabled, adultUnlockedSession) {
+        if (isChannelAllowed(initialChannel, parentalEnabled, adultUnlockedSession)) initialChannel
+        else allowedChannels.firstOrNull() ?: initialChannel
+    }
+    var slots by remember(safeInitial, allowedChannels) {
+        mutableStateOf(
+            listOf(
+                safeInitial,
+                allowedChannels.getOrNull(1) ?: safeInitial,
+                allowedChannels.getOrNull(2) ?: safeInitial,
+                allowedChannels.getOrNull(3) ?: safeInitial
+            )
+        )
+    }
     var activeAudioSlot by remember { mutableStateOf(0) }
     var pickingSlotIndex by remember { mutableStateOf<Int?>(null) }
 
     if (pickingSlotIndex != null) {
-        QuickChannelPickerDialog(S, theme, allChannels, slots[pickingSlotIndex!!], onDismiss = { pickingSlotIndex = null }) { chosen ->
+        QuickChannelPickerDialog(S, theme, allowedChannels, slots[pickingSlotIndex!!], onDismiss = { pickingSlotIndex = null }) { chosen ->
             val mutable = slots.toMutableList(); mutable[pickingSlotIndex!!] = chosen; slots = mutable; pickingSlotIndex = null
         }
     }
@@ -617,7 +869,19 @@ fun MultiViewScreenOverlay(S: Strings, theme: AppThemePalette, allChannels: List
                 for (colIdx in 0..1) {
                     val slotIdx = rowIdx * 2 + colIdx; val ch = slots[slotIdx]; val isAudioActive = activeAudioSlot == slotIdx
                     Box(modifier = Modifier.weight(1f).fillMaxHeight().border(if (isAudioActive) 3.dp else 1.dp, if (isAudioActive) theme.primary else Color.DarkGray, RoundedCornerShape(8.dp)).clip(RoundedCornerShape(8.dp)).clickable { activeAudioSlot = slotIdx }) {
-                        ExoVideoPlayer(ch.streamUrl, ch.userAgent ?: playerDefaultUa, 0, playerBufferMode, false, S.reconnecting, Modifier.fillMaxSize(), isMuted = !isAudioActive)
+                        ExoVideoPlayer(
+                            streamUrl = ch.streamUrl,
+                            userAgent = ch.userAgent ?: playerDefaultUa,
+                            resizeMode = 0,
+                            bufferMode = playerBufferMode,
+                            useNativeController = false,
+                            reconnectingText = S.reconnecting,
+                            modifier = Modifier.fillMaxSize(),
+                            isMuted = !isAudioActive,
+                            referrer = ch.referrer,
+                            cookie = ch.cookie,
+                            isRu = S.isRu
+                        )
                         Row(modifier = Modifier.align(Alignment.TopStart).padding(6.dp).background(Color(0xBB000000), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(if (isAudioActive) "🔊 ${ch.name}" else "🔇 ${ch.name}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, modifier = Modifier.widthIn(max = 110.dp))
                             Text(if (S.isRu) "🔄 Канал" else "🔄 Change", color = theme.primary, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { pickingSlotIndex = slotIdx })
@@ -632,17 +896,65 @@ fun MultiViewScreenOverlay(S: Strings, theme: AppThemePalette, allChannels: List
 
 @Composable
 fun ParentalPinDialog(S: Strings, theme: AppThemePalette, expectedPin: String, onSuccess: () -> Unit, onDismiss: () -> Unit) {
-    var entered by remember { mutableStateOf("") }; var error by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("iptv_prefs", Context.MODE_PRIVATE) }
+    var entered by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf(false) }
+    var failedAttempts by remember { mutableIntStateOf(0) }
+    var lockedUntilMs by remember { mutableLongStateOf(0L) }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(lockedUntilMs) {
+        while (lockedUntilMs > System.currentTimeMillis()) {
+            nowMs = System.currentTimeMillis()
+            delay(500L)
+        }
+        nowMs = System.currentTimeMillis()
+    }
+
+    val secondsLeft = ((lockedUntilMs - nowMs) / 1000L).coerceAtLeast(0L)
+
+    fun submit() {
+        if (secondsLeft > 0L) return
+        val ok = verifyParentalPin(prefs, entered) || (expectedPin.isNotBlank() && !hasCustomParentalPin(prefs) && entered == expectedPin)
+        if (ok) {
+            onSuccess()
+        } else {
+            error = true
+            failedAttempts += 1
+            entered = ""
+            if (failedAttempts >= 5) {
+                lockedUntilMs = System.currentTimeMillis() + 15_000L
+                failedAttempts = 0
+            }
+        }
+    }
+
     Dialog(onDismissRequest = onDismiss) {
         Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp)) {
             Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(Icons.Default.Lock, null, tint = theme.primary, modifier = Modifier.size(44.dp))
                 Text(if (S.isRu) "🔒 Родительский контроль (18+)" else "🔒 Parental Control (18+)", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.text)
-                OutlinedTextField(value = entered, onValueChange = { entered = it.filter { c -> c.isDigit() }.take(4); error = false; if (entered == expectedPin) onSuccess() }, label = { Text(if (S.isRu) "4-значный PIN" else "4-digit PIN") }, singleLine = true)
-                if (error) Text(if (S.isRu) "❌ Неверный PIN-код" else "❌ Wrong PIN", color = Color(0xFFEF4444), fontSize = 13.sp)
+                OutlinedTextField(
+                    value = entered,
+                    onValueChange = { entered = it.filter { c -> c.isDigit() }.take(8); error = false },
+                    label = { Text(if (S.isRu) "Введите PIN" else "Enter PIN") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    enabled = secondsLeft == 0L,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (secondsLeft > 0L) {
+                    Text(
+                        if (S.isRu) "⏳ Слишком много попыток. Ждите ${secondsLeft}с" else "⏳ Too many attempts. Wait ${secondsLeft}s",
+                        color = Color(0xFFF59E0B), fontSize = 13.sp
+                    )
+                } else if (error) {
+                    Text(if (S.isRu) "❌ Неверный PIN-код" else "❌ Wrong PIN", color = Color(0xFFEF4444), fontSize = 13.sp)
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(onClick = onDismiss) { Text(if (S.isRu) "Отмена" else "Cancel") }
-                    Button(onClick = { if (entered == expectedPin) onSuccess() else error = true }) { Text("OK") }
+                    Button(onClick = { submit() }, enabled = secondsLeft == 0L && entered.isNotEmpty()) { Text("OK") }
                 }
             }
         }
