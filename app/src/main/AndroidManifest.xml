@@ -13,8 +13,9 @@
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:icon="@android:drawable/ic_media_play"
-        android:banner="@android:drawable/ic_media_play"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:banner="@drawable/tv_banner"
         android:label="CCTV Plus"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
