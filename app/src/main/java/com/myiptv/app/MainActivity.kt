@@ -312,6 +312,7 @@ class MainActivity : ComponentActivity() {
 
             var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
             var hiddenGroups by remember { mutableStateOf(loadHiddenGroups(prefs)) }
+            var lockedGroups by remember { mutableStateOf(loadLockedGroups(prefs)) }
             var vodItems by remember { mutableStateOf<List<VodMovie>>(emptyList()) }
             var vodHistory by remember { mutableStateOf(loadVodHistory(prefs)) }
             var vodFolderStack by remember { mutableStateOf<List<Pair<String, List<VodMovie>>>>(emptyList()) }
@@ -420,6 +421,7 @@ class MainActivity : ComponentActivity() {
                 saveNamedList(prefs, "playlists_json", playlists)
                 saveNamedList(prefs, "epgs_json", epgSources)
                 saveHiddenGroups(prefs, hiddenGroups)
+                saveLockedGroups(prefs, lockedGroups)
                 prefs.edit()
                     .putString("device_type", deviceType).putString("control_mode", controlMode)
                     .putInt("clock_pos", clockPosition).putInt("player_engine", playerEngine)
@@ -509,9 +511,11 @@ class MainActivity : ComponentActivity() {
                         loadedChannels.addAll(stCh); loadedVod.addAll(stVod)
                     }
                     channels = loadedChannels; vodItems = loadedVod
-                    playlistErrorText = if (loadedChannels.isEmpty() && activePlaylist != null) NetworkLoader.lastM3uError else null
+                    playlistErrorText = if (loadedChannels.isEmpty() && (activePlaylist != null || (stalkerUrl.isNotBlank() && stalkerMac.isNotBlank()))) {
+                        NetworkLoader.lastM3uError ?: NetworkLoader.lastStalkerError
+                    } else null
                     val stillValid = currentChannel?.let { cur -> loadedChannels.find { it.id == cur.id || it.streamUrl == cur.streamUrl } }
-                    currentChannel = stillValid ?: loadedChannels.firstOrNull { isChannelAllowed(it, parentalEnabled, adultUnlockedSession) }
+                    currentChannel = stillValid ?: loadedChannels.firstOrNull { isChannelAllowed(it, parentalEnabled, adultUnlockedSession, lockedGroups) }
                     isLoading = false
                     loadEpgWithStatus(embeddedEpg, forceRefresh, loadedChannels)
                 }
@@ -541,6 +545,7 @@ class MainActivity : ComponentActivity() {
                 openFullscreenOnTap = prefs.getBoolean("player_auto_fs", false)
                 favoriteIds = prefs.getStringSet("favs", emptySet())?.toSet() ?: emptySet()
                 hiddenGroups = loadHiddenGroups(prefs)
+                lockedGroups = loadLockedGroups(prefs)
                 reloadAllData(forceRefresh = true)
             }
 
@@ -552,7 +557,7 @@ class MainActivity : ComponentActivity() {
             }
 
             fun runWithPinCheck(ch: Channel, action: () -> Unit) {
-                if (!isChannelAllowed(ch, parentalEnabled, adultUnlockedSession)) {
+                if (!isChannelAllowed(ch, parentalEnabled, adultUnlockedSession, lockedGroups)) {
                     pendingPinAction = action
                 } else {
                     action()
@@ -582,7 +587,7 @@ class MainActivity : ComponentActivity() {
 
             fun zapChannelStep(step: Int) {
                 val baseList = visibleChannels.ifEmpty { channels }
-                val allowedList = baseList.filter { isChannelAllowed(it, parentalEnabled, adultUnlockedSession) }
+                val allowedList = baseList.filter { isChannelAllowed(it, parentalEnabled, adultUnlockedSession, lockedGroups) }
                 val list = allowedList.ifEmpty { baseList }
                 if (list.isEmpty()) return
                 val curIdx = list.indexOfFirst { it.id == currentChannel?.id }.let { if (it < 0) 0 else it }
@@ -747,7 +752,29 @@ class MainActivity : ComponentActivity() {
                             ParentalPinDialog(S, themePalette, parentalPin, onSuccess = { adultUnlockedSession = true; val act = pendingPinAction; pendingPinAction = null; act?.invoke() }, onDismiss = { pendingPinAction = null })
                         }
                         if (showHiddenGroupsDialog) {
-                            HiddenCategoriesDialog(S, themePalette, allGroupsList, hiddenGroups, onToggleGroup = { grp -> hiddenGroups = if (hiddenGroups.contains(grp)) hiddenGroups - grp else hiddenGroups + grp; saveHiddenGroups(prefs, hiddenGroups) }, onShowAll = { hiddenGroups = emptySet(); saveHiddenGroups(prefs, hiddenGroups) }, onDismiss = { showHiddenGroupsDialog = false })
+                            HiddenCategoriesDialog(
+                                S, themePalette, allGroupsList, hiddenGroups,
+                                onToggleGroup = { grp -> hiddenGroups = if (hiddenGroups.contains(grp)) hiddenGroups - grp else hiddenGroups + grp; saveHiddenGroups(prefs, hiddenGroups) },
+                                onShowAll = { hiddenGroups = emptySet(); saveHiddenGroups(prefs, hiddenGroups) },
+                                onDismiss = { showHiddenGroupsDialog = false },
+                                lockedGroups = lockedGroups,
+                                onToggleLockedGroup = { grp ->
+                                    val applyToggle = {
+                                        val next = if (lockedGroups.contains(grp)) lockedGroups - grp else lockedGroups + grp
+                                        lockedGroups = next
+                                        saveLockedGroups(prefs, next)
+                                        if (next.contains(grp) && !parentalEnabled) {
+                                            parentalEnabled = true
+                                            prefs.edit().putBoolean("parental_enabled", true).apply()
+                                        }
+                                    }
+                                    if (lockedGroups.contains(grp) && parentalEnabled && !adultUnlockedSession) {
+                                        pendingPinAction = applyToggle
+                                    } else {
+                                        applyToggle()
+                                    }
+                                }
+                            )
                         }
                         if (showSleepDialog) {
                             SleepTimerDialog(S, themePalette, (sleepSecondsLeft + 59) / 60, onSelectMinutes = { sleepSecondsLeft = it * 60 }, onDismiss = { showSleepDialog = false })
@@ -791,7 +818,8 @@ class MainActivity : ComponentActivity() {
                                     currentChannel = chosen; isMultiViewMode = false; isFullscreen = true
                                 },
                                 parentalEnabled = parentalEnabled,
-                                adultUnlockedSession = adultUnlockedSession
+                                adultUnlockedSession = adultUnlockedSession,
+                                lockedGroups = lockedGroups
                             )
                         } else if (isFullscreen && (currentChannel != null || currentVodPlay != null)) {
                             BackHandler { if (showTiviMateOverlay) showTiviMateOverlay = false else isFullscreen = false }
@@ -987,13 +1015,16 @@ class MainActivity : ComponentActivity() {
                                             onToggleReminder = { ch, prog -> toggleReminderFor(ch, prog) },
                                             onClose = { showTiviMateOverlay = false },
                                             parentalEnabled = parentalEnabled,
-                                            adultUnlockedSession = adultUnlockedSession
+                                            adultUnlockedSession = adultUnlockedSession,
+                                            lockedGroups = lockedGroups
                                         )
                                     }
                                 }
                             }
                         } else {
-                            Column(modifier = Modifier.fillMaxSize()) {
+                            val overscanH = if (deviceType == "tv") 24.dp else 0.dp
+                            val overscanV = if (deviceType == "tv") 14.dp else 0.dp
+                            Column(modifier = Modifier.fillMaxSize().padding(horizontal = overscanH, vertical = overscanV)) {
                                 NavigationBar(containerColor = themePalette.card, modifier = Modifier.defaultMinSize(minHeight = 64.dp)) {
                                     NavigationBarItem(selected = currentTab == 0, onClick = { currentTab = 0; currentVodPlay = null }, icon = { Icon(Icons.Default.Tv, null) }, label = { Text(S.liveTv) })
                                     NavigationBarItem(selected = currentTab == 1, onClick = { currentTab = 1 }, icon = { Icon(Icons.Default.Movie, null) }, label = { Text("${S.vod} (${vodItems.count { !it.id.startsWith("vp_next_") }})") })
