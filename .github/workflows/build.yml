@@ -31,7 +31,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - - name: Prepare Release Keystore from Secrets
+      - name: Prepare Release Keystore from Secrets
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
