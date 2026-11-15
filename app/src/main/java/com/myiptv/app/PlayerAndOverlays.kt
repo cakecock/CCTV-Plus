@@ -823,7 +823,9 @@ fun VodDetailsDialog(
 @Composable
 fun HiddenCategoriesDialog(
     S: Strings, theme: AppThemePalette, allGroups: List<String>, hiddenGroups: Set<String>,
-    onToggleGroup: (String) -> Unit, onShowAll: () -> Unit, onDismiss: () -> Unit
+    onToggleGroup: (String) -> Unit, onShowAll: () -> Unit, onDismiss: () -> Unit,
+    lockedGroups: Set<String> = emptySet(),
+    onToggleLockedGroup: ((String) -> Unit)? = null
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Card(colors = CardDefaults.cardColors(containerColor = theme.card), shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
@@ -832,16 +834,34 @@ fun HiddenCategoriesDialog(
                     Text(if (S.isRu) "👁 Видимые категории" else "👁 Visible Categories", fontWeight = FontWeight.ExtraBold, fontSize = 17.sp, color = theme.primary)
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, null, tint = theme.text) }
                 }
-                Text(if (S.isRu) "Снимите галочки с ненужных категорий:" else "Uncheck groups to hide:", fontSize = 12.sp, color = theme.subtext, modifier = Modifier.padding(bottom = 8.dp))
+                Text(
+                    if (onToggleLockedGroup != null) {
+                        if (S.isRu) "Галочка — видимость, 🔒 — защита категории PIN-кодом:" else "Checkbox — visibility, 🔒 — lock category with PIN:"
+                    } else {
+                        if (S.isRu) "Снимите галочки с ненужных категорий:" else "Uncheck groups to hide:"
+                    },
+                    fontSize = 12.sp, color = theme.subtext, modifier = Modifier.padding(bottom = 8.dp)
+                )
                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(allGroups) { grp ->
                         val isVisible = !hiddenGroups.contains(grp)
+                        val isLocked = lockedGroups.contains(grp)
                         Row(
                             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(theme.bg)
                                 .tvFocusHighlight(theme.primary, 10.dp).clickable { onToggleGroup(grp) }.padding(horizontal = 12.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(grp, color = if (isVisible) theme.text else theme.subtext, fontSize = 14.sp, modifier = Modifier.weight(1f), maxLines = 1)
+                            if (onToggleLockedGroup != null) {
+                                IconButton(onClick = { onToggleLockedGroup(grp) }, modifier = Modifier.size(36.dp)) {
+                                    Icon(
+                                        if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                        contentDescription = null,
+                                        tint = if (isLocked) Color(0xFFF59E0B) else theme.subtext.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
                             Checkbox(checked = isVisible, onCheckedChange = { onToggleGroup(grp) })
                         }
                     }
@@ -874,21 +894,23 @@ fun SleepTimerDialog(S: Strings, theme: AppThemePalette, currentMinutesLeft: Int
 }
 
 @Composable
+@Composable
 fun TiviMateTvOverlay(
     S: Strings, theme: AppThemePalette, channels: List<Channel>, hiddenGroups: Set<String>,
     epgScheduleMap: Map<String, List<EpgProgramItem>>, reminders: List<ProgramReminder>,
     currentChannel: Channel?, onSelectChannel: (Channel) -> Unit,
     onPlayArchive: (Channel, EpgProgramItem) -> Unit, onToggleReminder: (Channel, EpgProgramItem) -> Unit, onClose: () -> Unit,
-    parentalEnabled: Boolean = false, adultUnlockedSession: Boolean = false
+    parentalEnabled: Boolean = false, adultUnlockedSession: Boolean = false,
+    lockedGroups: Set<String> = emptySet()
 ) {
-    val visibleChannels = remember(channels, hiddenGroups, parentalEnabled, adultUnlockedSession) {
-        channels.filter { !hiddenGroups.contains(it.group) && isChannelAllowed(it, parentalEnabled, adultUnlockedSession) }
+    val visibleChannels = remember(channels, hiddenGroups, parentalEnabled, adultUnlockedSession, lockedGroups) {
+        channels.filter { !hiddenGroups.contains(it.group) && isChannelAllowed(it, parentalEnabled, adultUnlockedSession, lockedGroups) }
     }
     val groups = remember(visibleChannels, S) { listOf(S.allGroups) + visibleChannels.map { it.group }.distinct() }
     var selGroup by remember { mutableStateOf(currentChannel?.group?.takeIf { !hiddenGroups.contains(it) } ?: S.allGroups) }
     val groupChannels = remember(visibleChannels, selGroup, S) { if (selGroup == S.allGroups) visibleChannels else visibleChannels.filter { it.group == selGroup } }
-    var previewChannel by remember(currentChannel, visibleChannels) {
-        mutableStateOf(currentChannel?.takeIf { isChannelAllowed(it, parentalEnabled, adultUnlockedSession) } ?: visibleChannels.firstOrNull())
+    var previewChannel by remember(currentChannel, visibleChannels, lockedGroups) {
+        mutableStateOf(currentChannel?.takeIf { isChannelAllowed(it, parentalEnabled, adultUnlockedSession, lockedGroups) } ?: visibleChannels.firstOrNull())
     }
     val previewSchedule = remember(previewChannel, epgScheduleMap) { previewChannel?.let { findChannelSchedule(it, epgScheduleMap) } ?: emptyList() }
     val now = System.currentTimeMillis()
@@ -981,13 +1003,14 @@ fun MultiViewScreenOverlay(
     playerDefaultUa: String,
     onExitMultiView: (Channel) -> Unit,
     parentalEnabled: Boolean = false,
-    adultUnlockedSession: Boolean = false
+    adultUnlockedSession: Boolean = false,
+    lockedGroups: Set<String> = emptySet()
 ) {
-    val allowedChannels = remember(allChannels, parentalEnabled, adultUnlockedSession) {
-        allChannels.filter { isChannelAllowed(it, parentalEnabled, adultUnlockedSession) }
+    val allowedChannels = remember(allChannels, parentalEnabled, adultUnlockedSession, lockedGroups) {
+        allChannels.filter { isChannelAllowed(it, parentalEnabled, adultUnlockedSession, lockedGroups) }
     }
-    val safeInitial = remember(initialChannel, allowedChannels, parentalEnabled, adultUnlockedSession) {
-        if (isChannelAllowed(initialChannel, parentalEnabled, adultUnlockedSession)) initialChannel
+    val safeInitial = remember(initialChannel, allowedChannels, parentalEnabled, adultUnlockedSession, lockedGroups) {
+        if (isChannelAllowed(initialChannel, parentalEnabled, adultUnlockedSession, lockedGroups)) initialChannel
         else allowedChannels.firstOrNull() ?: initialChannel
     }
     var slots by remember(safeInitial, allowedChannels) {
