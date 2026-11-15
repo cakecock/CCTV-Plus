@@ -31,7 +31,7 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Prepare Release Keystore from Secrets
+      - - name: Prepare Release Keystore from Secrets
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
@@ -43,6 +43,9 @@ jobs:
             exit 1
           fi
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > /tmp/release.jks
+          rm -f /tmp/check.p12
+          keytool -importkeystore -srckeystore /tmp/release.jks -srcstorepass "$ANDROID_KEYSTORE_PASS" -srcalias "$ANDROID_KEY_ALIAS" -srckeypass "$ANDROID_KEY_PASS" -destkeystore /tmp/check.p12 -deststorepass test1234 -destkeypass test1234 -noprompt >/dev/null
+          rm -f /tmp/check.p12
 
       - name: Prepare Custom Icon, Banner, Manifest and Gradle Configs
         run: |
