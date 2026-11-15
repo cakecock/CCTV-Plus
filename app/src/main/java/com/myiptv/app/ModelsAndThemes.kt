@@ -1,10 +1,18 @@
 package com.myiptv.app
 
 import android.content.SharedPreferences
+import android.util.Base64
 import androidx.compose.ui.graphics.Color
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
 
 // === РЕКВИЗИТЫ ДЛЯ ПОДДЕРЖКИ РАЗРАБОТЧИКА (впиши свои в кавычки!) ===
 const val DONATE_CARD_NUMBER = "ВПИШИ_НОМЕР_КАРТЫ_СЮДА"
@@ -24,7 +32,10 @@ data class Channel(
     val epgId: String?,
     val userAgent: String? = null,
     val catchupDays: Int = 0,
-    val catchupSource: String? = null
+    val catchupSource: String? = null,
+    val referrer: String? = null,
+    val cookie: String? = null,
+    val catchupType: String? = null
 )
 
 data class EpgProgramItem(
@@ -127,8 +138,76 @@ fun formatTimeDuration(ms: Long): String {
 
 fun isAdultCategoryOrChannel(text: String): Boolean {
     val low = text.lowercase()
-    return low.contains("18+") || low.contains("взросл") || low.contains("эротик") ||
-        low.contains("эрот") || low.contains("adult") || low.contains("xxx") || low.contains("erotic")
+    return low.contains("18+") || low.contains("+18") || low.contains("взросл") ||
+        low.contains("эротик") || low.contains("эрот") || low.contains("порно") ||
+        low.contains("adult") || low.contains("xxx") || low.contains("erotic") || low.contains("porn")
+}
+
+fun isChannelAllowed(
+    channel: Channel,
+    parentalEnabled: Boolean,
+    adultUnlockedSession: Boolean
+): Boolean {
+    if (!parentalEnabled || adultUnlockedSession) return true
+    return !isAdultCategoryOrChannel("${channel.group} ${channel.name}")
+}
+
+fun stableChannelId(streamUrl: String, fallbackName: String = ""): String {
+    val source = streamUrl.trim().ifEmpty { fallbackName.trim() }
+    val digest = MessageDigest.getInstance("SHA-256").digest(source.toByteArray(Charsets.UTF_8))
+    val hex = digest.take(8).joinToString("") { "%02x".format(it) }
+    return "ch_$hex"
+}
+
+private const val PIN_HASH_KEY = "parental_pin_hash"
+private const val LEGACY_PIN_KEY = "parental_pin"
+private const val PIN_ITERATIONS = 10_000
+private const val PIN_KEY_LEN_BITS = 256
+
+private fun pbkdf2Hash(pin: String, salt: ByteArray): ByteArray {
+    val spec = PBEKeySpec(pin.toCharArray(), salt, PIN_ITERATIONS, PIN_KEY_LEN_BITS)
+    return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+}
+
+fun setParentalPin(prefs: SharedPreferences, pin: String) {
+    val clean = pin.trim().ifEmpty { "0000" }
+    val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+    val hash = pbkdf2Hash(clean, salt)
+    val encoded = "pbkdf2:" +
+        Base64.encodeToString(salt, Base64.NO_WRAP) + ":" +
+        Base64.encodeToString(hash, Base64.NO_WRAP)
+    prefs.edit()
+        .putString(PIN_HASH_KEY, encoded)
+        .remove(LEGACY_PIN_KEY)
+        .apply()
+}
+
+fun hasCustomParentalPin(prefs: SharedPreferences): Boolean {
+    val hasHash = !prefs.getString(PIN_HASH_KEY, null).isNullOrBlank()
+    val legacy = prefs.getString(LEGACY_PIN_KEY, null)
+    return hasHash || (!legacy.isNullOrBlank() && legacy != "0000")
+}
+
+fun verifyParentalPin(prefs: SharedPreferences, inputPin: String): Boolean {
+    val cleanInput = inputPin.trim()
+    val storedHash = prefs.getString(PIN_HASH_KEY, null)
+    if (!storedHash.isNullOrBlank() && storedHash.startsWith("pbkdf2:")) {
+        val parts = storedHash.split(":")
+        if (parts.size == 3) {
+            return runCatching {
+                val salt = Base64.decode(parts[1], Base64.NO_WRAP)
+                val expected = Base64.decode(parts[2], Base64.NO_WRAP)
+                val actual = pbkdf2Hash(cleanInput, salt)
+                MessageDigest.isEqual(expected, actual)
+            }.getOrDefault(false)
+        }
+    }
+    val legacyPin = prefs.getString(LEGACY_PIN_KEY, "0000") ?: "0000"
+    val ok = cleanInput == legacyPin
+    if (ok) {
+        setParentalPin(prefs, legacyPin)
+    }
+    return ok
 }
 
 val LicenseItemsRu = listOf(
@@ -163,20 +242,94 @@ val PrivacyItemsEn = listOf(
     "5. Bug Reports: Private subscription keys are automatically masked with asterisks (***)."
 )
 
+fun isArchiveProgramAvailable(
+    channel: Channel,
+    program: EpgProgramItem,
+    maxArchiveDays: Int,
+    nowMs: Long = System.currentTimeMillis()
+): Boolean {
+    if (program.startMs >= nowMs) return false
+    val effectiveDays = if (channel.catchupDays > 0) minOf(channel.catchupDays, maxArchiveDays) else maxArchiveDays
+    val maxAgeMs = effectiveDays.coerceAtLeast(1) * 86_400_000L
+    return (nowMs - program.startMs) <= maxAgeMs
+}
+
+private fun formatUtcPattern(epochSec: Long, pattern: String): String {
+    return runCatching {
+        val sdf = SimpleDateFormat(pattern, Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
+        sdf.format(Date(epochSec * 1000L))
+    }.getOrDefault(epochSec.toString())
+}
+
 fun buildArchiveStreamUrl(channel: Channel, startMs: Long, stopMs: Long): String {
     val startSec = startMs / 1000L
+    val endSec = (stopMs / 1000L).coerceAtLeast(startSec + 60L)
     val nowSec = System.currentTimeMillis() / 1000L
-    val durationSec = ((stopMs - startMs) / 1000L).coerceAtLeast(60L)
+    val durationSec = (endSec - startSec).coerceAtLeast(60L)
+    val offsetSec = (nowSec - startSec).coerceAtLeast(0L)
     val base = channel.streamUrl
 
-    if (!channel.catchupSource.isNullOrBlank()) {
-        return channel.catchupSource
+    val sourceTemplate = channel.catchupSource
+    if (!sourceTemplate.isNullOrBlank()) {
+        val datePatternRegex = Regex("""\$?\{(start|end|stop|timestamp|now|utc|lutc):([^}]+)\}""")
+        val withDates = datePatternRegex.replace(sourceTemplate) { m ->
+            val kind = m.groupValues[1].lowercase()
+            val fmt = m.groupValues[2]
+            val targetSec = when (kind) {
+                "end", "stop" -> endSec
+                "timestamp", "now", "lutc" -> nowSec
+                else -> startSec
+            }
+            formatUtcPattern(targetSec, fmt)
+        }
+        return withDates
             .replace("\${start}", startSec.toString())
+            .replace("{start}", startSec.toString())
+            .replace("\${end}", endSec.toString())
+            .replace("{end}", endSec.toString())
+            .replace("\${stop}", endSec.toString())
+            .replace("{stop}", endSec.toString())
+            .replace("\${utcend}", endSec.toString())
+            .replace("{utcend}", endSec.toString())
             .replace("\${timestamp}", nowSec.toString())
-            .replace("\${offset}", (nowSec - startSec).toString())
+            .replace("{timestamp}", nowSec.toString())
+            .replace("\${offset}", offsetSec.toString())
+            .replace("{offset}", offsetSec.toString())
             .replace("\${duration}", durationSec.toString())
+            .replace("{duration}", durationSec.toString())
+            .replace("\${utc}", startSec.toString())
             .replace("{utc}", startSec.toString())
+            .replace("\${lutc}", nowSec.toString())
             .replace("{lutc}", nowSec.toString())
+            .replace("\${Y}", formatUtcPattern(startSec, "yyyy"))
+            .replace("{Y}", formatUtcPattern(startSec, "yyyy"))
+            .replace("\${m}", formatUtcPattern(startSec, "MM"))
+            .replace("{m}", formatUtcPattern(startSec, "MM"))
+            .replace("\${d}", formatUtcPattern(startSec, "dd"))
+            .replace("{d}", formatUtcPattern(startSec, "dd"))
+            .replace("\${H}", formatUtcPattern(startSec, "HH"))
+            .replace("{H}", formatUtcPattern(startSec, "HH"))
+            .replace("\${M}", formatUtcPattern(startSec, "mm"))
+            .replace("{M}", formatUtcPattern(startSec, "mm"))
+            .replace("\${S}", formatUtcPattern(startSec, "ss"))
+            .replace("{S}", formatUtcPattern(startSec, "ss"))
+    }
+
+    if (channel.catchupType.equals("xc", ignoreCase = true) || channel.catchupType.equals("xtream", ignoreCase = true)) {
+        val xcRegex = Regex("""^(https?://[^/]+)(?:/live)?/([^/]+)/([^/]+)/(\d+)(\.[a-zA-Z0-9]+)?$""")
+        val m = xcRegex.matchEntire(base.substringBefore("?"))
+        if (m != null) {
+            val host = m.groupValues[1]
+            val user = m.groupValues[2]
+            val pass = m.groupValues[3]
+            val streamId = m.groupValues[4]
+            val ext = m.groupValues[5].ifEmpty { ".ts" }
+            val durMin = (durationSec / 60L).coerceAtLeast(1L)
+            val startFormatted = formatUtcPattern(startSec, "yyyy-MM-dd:HH-mm")
+            return "$host/timeshift/$user/$pass/$durMin/$startFormatted/$streamId$ext"
+        }
     }
 
     val sep = if (base.contains("?")) "&" else "?"
@@ -275,9 +428,14 @@ val EnStrings = Strings(
 
 fun maskSensitiveKeys(text: String): String {
     return text
-        .replace(Regex("\\[key:[^\\]]+\\]"), "[key:***HIDDEN***]")
-        .replace(Regex("\"key\"\\s*:\\s*\"[^\"]+\""), "\"key\":\"***HIDDEN***\"")
+        .replace(Regex("\\[key:[^\\]]+\\]", RegexOption.IGNORE_CASE), "[key:***HIDDEN***]")
+        .replace(Regex("\"(key|token|password|pass|pwd|secret|mac)\"\\s*:\\s*\"[^\"]*\"", RegexOption.IGNORE_CASE), "\"$1\":\"***HIDDEN***\"")
+        .replace(Regex("([?&](?:username|user|login|password|pass|pwd|token|auth|key|apikey|api_key|secret|mac|hash|sig)=)([^&\\s\"']+)", RegexOption.IGNORE_CASE), "$1***HIDDEN***")
+        .replace(Regex("(https?://)([^/:\\s@]+):([^@\\s/]+)@", RegexOption.IGNORE_CASE), "$1***:***@")
+        .replace(Regex("\\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\\b"), "XX:XX:XX:***:***:***")
 }
+
+fun maskUrlForDisplay(url: String): String = maskSensitiveKeys(url.trim())
 
 fun loadHiddenGroups(prefs: SharedPreferences): Set<String> = prefs.getStringSet("hidden_groups", emptySet())?.toSet() ?: emptySet()
 fun saveHiddenGroups(prefs: SharedPreferences, groups: Set<String>) { prefs.edit().putStringSet("hidden_groups", groups).apply() }
@@ -348,7 +506,6 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     root.put("archive_days", prefs.getInt("archive_days", 3))
     root.put("epg_offset_hours", prefs.getInt("epg_offset_hours", 0))
     root.put("parental_enabled", prefs.getBoolean("parental_enabled", false))
-    root.put("parental_pin", prefs.getString("parental_pin", "0000"))
     root.put("theme_id", prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
     root.put("playlists_json", prefs.getString("playlists_json", "[]"))
     root.put("selected_playlist_id", prefs.getString("selected_playlist_id", ""))
@@ -383,7 +540,6 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
         .putInt("archive_days", root.optInt("archive_days", 3))
         .putInt("epg_offset_hours", root.optInt("epg_offset_hours", 0))
         .putBoolean("parental_enabled", root.optBoolean("parental_enabled", false))
-        .putString("parental_pin", root.optString("parental_pin", "0000"))
         .putString("theme_id", root.optString("theme_id", AppThemePalette.DARK_EMERALD.id))
         .putString("playlists_json", root.optString("playlists_json", "[]"))
         .putString("selected_playlist_id", root.optString("selected_playlist_id", ""))
@@ -400,5 +556,9 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
         .putStringSet("favs", favSet)
         .putStringSet("hidden_groups", hidSet)
         .apply()
+    val legacyPin = root.optString("parental_pin", "").trim()
+    if (legacyPin.isNotEmpty()) {
+        setParentalPin(prefs, legacyPin)
+    }
     true
 }.getOrDefault(false)
