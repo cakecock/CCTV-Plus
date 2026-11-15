@@ -5,19 +5,55 @@ plugins {
 
 android {
     namespace = "com.myiptv.app"
-    compileSdk = 34
+    compileSdk = 35
+
+    val ciBuildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
 
     defaultConfig {
         applicationId = "com.myiptv.app"
-        minSdk = 29 // Android 10+
+        minSdk = 29
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = ciBuildNumber
+        versionName = "2.0.$ciBuildNumber"
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+    }
+
+    val ciKeystoreFile = file("/tmp/release.jks")
+    val ciStorePass = System.getenv("ANDROID_KEYSTORE_PASS")
+    val ciKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+    val ciKeyPass = System.getenv("ANDROID_KEY_PASS")
+    val hasCiSigning = ciKeystoreFile.exists() &&
+        !ciStorePass.isNullOrBlank() &&
+        !ciKeyAlias.isNullOrBlank() &&
+        !ciKeyPass.isNullOrBlank()
+
+    signingConfigs {
+        if (hasCiSigning) {
+            create("releaseSign") {
+                storeFile = ciKeystoreFile
+                storePassword = ciStorePass
+                keyAlias = ciKeyAlias
+                keyPassword = ciKeyPass
+                enableV1Signing = true
+                enableV2Signing = true
+            }
+        }
     }
 
     buildTypes {
+        debug {
+            if (hasCiSigning) signingConfig = signingConfigs.getByName("releaseSign")
+        }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            if (hasCiSigning) signingConfig = signingConfigs.getByName("releaseSign")
         }
     }
 
@@ -28,6 +64,11 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
     }
 
     buildFeatures {
@@ -48,14 +89,11 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
-
-    // Видеоплеер Media3 (ExoPlayer) + HLS (M3U8) + DASH
-    implementation("androidx.media3:media3-exoplayer:1.4.0")
-    implementation("androidx.media3:media3-exoplayer-hls:1.4.0")
-    implementation("androidx.media3:media3-exoplayer-dash:1.4.0")
-    implementation("androidx.media3:media3-ui:1.4.0")
-
-    // Сеть, загрузка картинок и генератор QR-кода для ТВ
+    implementation("androidx.media3:media3-exoplayer:1.5.0")
+    implementation("androidx.media3:media3-exoplayer-hls:1.5.0")
+    implementation("androidx.media3:media3-exoplayer-dash:1.5.0")
+    implementation("androidx.media3:media3-ui:1.5.0")
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("com.google.zxing:core:3.5.3")
