@@ -773,12 +773,13 @@ fun AccordionSettingsScreen(
                                 forcePinError = ""
                                 showForceSetPinDialog = true
                             }
-                        } else {
+                       } else {
                             disablePinInput = ""
                             disablePinError = false
                             showDisableParentalDialog = true
                         }
                     })
+                }
 
                 val needCurrentPin = parentalEnabled || hasCustomParentalPin(prefs)
                 if (needCurrentPin) {
