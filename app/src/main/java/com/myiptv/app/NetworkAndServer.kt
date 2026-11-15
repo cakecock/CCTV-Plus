@@ -78,11 +78,24 @@ object NetworkLoader {
         return key to baseUrl
     }
 
-    private fun isPortalOrImageUrl(u: String, baseUrl: String): Boolean {
-        val low = u.lowercase()
-        if (low.contains("/api/v1")) return true
-        if (baseUrl.isNotEmpty() && low == baseUrl.lowercase()) return true
-        return low.endsWith(".jpg") || low.endsWith(".jpeg") || low.endsWith(".png") || low.endsWith(".webp") || low.endsWith(".gif")
+    private fun isPortalOrNonMediaUrl(u: String, baseUrl: String): Boolean {
+        val pathOnly = u.substringBefore("?").substringBefore("#").lowercase()
+        if (pathOnly.contains("/api/v1")) return true
+        if (baseUrl.isNotEmpty() && u.lowercase() == baseUrl.lowercase()) return true
+        return pathOnly.endsWith(".jpg") || pathOnly.endsWith(".jpeg") || pathOnly.endsWith(".png") ||
+            pathOnly.endsWith(".webp") || pathOnly.endsWith(".gif") || pathOnly.endsWith(".svg") ||
+            pathOnly.endsWith(".html") || pathOnly.endsWith(".htm") || pathOnly.endsWith(".css") || pathOnly.endsWith(".js")
+    }
+
+    private fun resolveRelativeUrl(raw: String, baseUrl: String): String {
+        val clean = raw.replace("\\/", "/").trim()
+        if (clean.isEmpty() || clean.startsWith("http://", true) || clean.startsWith("https://", true)) return clean
+        return runCatching {
+            val b = URI(baseUrl)
+            if (clean.startsWith("//")) "${b.scheme}:$clean"
+            else if (clean.startsWith("/")) "${b.scheme}://${b.authority}$clean"
+            else b.resolve(clean).toString()
+        }.getOrDefault(clean)
     }
 
     fun clearPlaylistCache(context: Context, url: String) {
@@ -153,13 +166,19 @@ object NetworkLoader {
         }.getOrDefault(false)
     }
 
-    suspend fun loadM3u(url: String, context: Context? = null, forceRefresh: Boolean = false): M3uParseResult = withContext(Dispatchers.IO) {
+    suspend fun loadM3u(
+        url: String,
+        context: Context? = null,
+        forceRefresh: Boolean = false,
+        isRu: Boolean = true
+    ): M3uParseResult = withContext(Dispatchers.IO) {
         val channels = mutableListOf<Channel>()
         val movies = mutableListOf<VodMovie>()
         var embeddedEpgUrl: String? = null
+        val defaultGroup = if (isRu) "Общие" else "General"
         lastM3uError = null
 
-        runCatching {
+        runCatchingCancellable {
             var tempFileToDelete: File? = null
             val rawStream: InputStream? = if (url.startsWith("content://") && context != null) {
                 context.contentResolver.openInputStream(Uri.parse(url))
@@ -212,9 +231,11 @@ object NetworkLoader {
                         val seenIds = mutableMapOf<String, Int>()
                         var line: String?
                         var name = ""
-                        var group = "Общие"
+                        var attrFallbackName = ""
+                        var group = defaultGroup
                         var logo: String? = null
                         var epgId: String? = null
+                        var explicitNum: Int? = null
                         var ua: String? = null
                         var referrer: String? = null
                         var cookie: String? = null
@@ -238,14 +259,16 @@ object NetworkLoader {
                                     val attrs = attrRegex.findAll(t).associate { it.groupValues[1].lowercase() to it.groupValues[2] }
                                     logo = attrs["tvg-logo"]?.takeIf { it.isNotBlank() }
                                     epgId = attrs["tvg-id"]?.takeIf { it.isNotBlank() } ?: attrs["tvg-name"]?.takeIf { it.isNotBlank() }
-                                    group = attrs["group-title"]?.takeIf { it.isNotBlank() } ?: "Общие"
+                                    attrFallbackName = attrs["tvg-name"]?.takeIf { it.isNotBlank() } ?: epgId.orEmpty()
+                                    explicitNum = attrs["tvg-chno"]?.toIntOrNull()?.takeIf { it > 0 }
+                                    group = attrs["group-title"]?.takeIf { it.isNotBlank() } ?: defaultGroup
                                     catchupSource = attrs["catchup-source"]?.takeIf { it.isNotBlank() }
                                     catchupType = attrs["catchup"]?.takeIf { it.isNotBlank() }
                                     val explicitDays = attrs["catchup-days"]?.toIntOrNull() ?: attrs["tvg-rec"]?.toIntOrNull() ?: attrs["timeshift"]?.toIntOrNull()
                                     val hasCatchupTag = catchupType != null || !catchupSource.isNullOrBlank()
                                     catchupDays = when {
                                         explicitDays != null && explicitDays > 0 -> explicitDays
-                                        hasCatchupTag -> 5
+                                        hasCatchupTag -> 1
                                         else -> 0
                                     }
                                 }
@@ -253,46 +276,57 @@ object NetworkLoader {
                                     val grp = t.substringAfter(":").trim()
                                     if (grp.isNotEmpty()) group = grp
                                 }
+                                t.startsWith("#EXTHTTP:", ignoreCase = true) -> {
+                                    runCatching {
+                                        val obj = JSONObject(t.substringAfter(":").trim())
+                                        if (ua.isNullOrBlank()) ua = obj.optString("User-Agent").ifEmpty { obj.optString("user-agent") }.ifEmpty { null }
+                                        if (referrer.isNullOrBlank()) referrer = obj.optString("Referer").ifEmpty { obj.optString("referer") }.ifEmpty { null }
+                                        if (cookie.isNullOrBlank()) cookie = obj.optString("Cookie").ifEmpty { obj.optString("cookie") }.ifEmpty { null }
+                                    }
+                                }
                                 t.startsWith("#EXTVLCOPT:http-user-agent=", ignoreCase = true) -> ua = t.substringAfter("=").trim()
                                 t.startsWith("#EXTVLCOPT:http-referrer=", ignoreCase = true) -> referrer = t.substringAfter("=").trim()
+                                t.startsWith("#EXTVLCOPT:http-origin=", ignoreCase = true) -> if (referrer.isNullOrBlank()) referrer = t.substringAfter("=").trim()
                                 t.startsWith("#EXTVLCOPT:http-cookie=", ignoreCase = true) -> cookie = t.substringAfter("=").trim()
                                 !t.startsWith("#") -> {
-                                    if (name.isNotEmpty()) {
-                                        val pathNoQuery = t.substringBefore("?").substringBefore("#").lowercase()
-                                        val isVod = pathNoQuery.endsWith(".mp4") || pathNoQuery.endsWith(".mkv") ||
-                                            pathNoQuery.endsWith(".avi") || pathNoQuery.endsWith(".mov") || pathNoQuery.endsWith(".webm")
-                                        val baseId = stableChannelId(t, name)
-                                        val dupCount = (seenIds[baseId] ?: 0) + 1
-                                        seenIds[baseId] = dupCount
-                                        val finalId = if (dupCount == 1) baseId else "${baseId}_$dupCount"
-
-                                        if (isVod) {
-                                            movies.add(VodMovie("vod_$finalId", name, group, logo, "", "", "", t))
-                                        } else {
-                                            val finalCatchup = if (catchupDays > 0) catchupDays else if (t.contains("/iptv/")) 5 else 0
-                                            channels.add(
-                                                Channel(
-                                                    id = finalId,
-                                                    number = num,
-                                                    name = name,
-                                                    group = group,
-                                                    logoUrl = logo,
-                                                    streamUrl = t,
-                                                    epgId = epgId,
-                                                    userAgent = ua,
-                                                    catchupDays = finalCatchup,
-                                                    catchupSource = catchupSource,
-                                                    referrer = referrer,
-                                                    cookie = cookie,
-                                                    catchupType = catchupType
-                                                )
-                                            )
-                                        }
-                                        num++
-                                        name = ""; group = "Общие"; logo = null; epgId = null
-                                        ua = null; referrer = null; cookie = null
-                                        catchupDays = 0; catchupSource = null; catchupType = null
+                                    val finalName = name.ifEmpty { attrFallbackName }.ifEmpty {
+                                        t.substringBefore("?").substringAfterLast("/").takeIf { it.isNotBlank() } ?: "Channel $num"
                                     }
+                                    val pathNoQuery = t.substringBefore("?").substringBefore("#").lowercase()
+                                    val isVod = pathNoQuery.endsWith(".mp4") || pathNoQuery.endsWith(".mkv") ||
+                                        pathNoQuery.endsWith(".avi") || pathNoQuery.endsWith(".mov") || pathNoQuery.endsWith(".webm")
+                                    val baseId = stableChannelId(t, finalName)
+                                    val dupCount = (seenIds[baseId] ?: 0) + 1
+                                    seenIds[baseId] = dupCount
+                                    val finalId = if (dupCount == 1) baseId else "${baseId}_$dupCount"
+                                    val chNum = explicitNum ?: num
+
+                                    if (isVod) {
+                                        movies.add(VodMovie("vod_$finalId", finalName, group, logo, "", "", "", t))
+                                    } else {
+                                        val finalCatchup = if (catchupDays > 0) catchupDays else if (t.contains("/iptv/")) 3 else 0
+                                        channels.add(
+                                            Channel(
+                                                id = finalId,
+                                                number = chNum,
+                                                name = finalName,
+                                                group = group,
+                                                logoUrl = logo,
+                                                streamUrl = t,
+                                                epgId = epgId,
+                                                userAgent = ua,
+                                                catchupDays = finalCatchup,
+                                                catchupSource = catchupSource,
+                                                referrer = referrer,
+                                                cookie = cookie,
+                                                catchupType = catchupType
+                                            )
+                                        )
+                                    }
+                                    num++
+                                    name = ""; attrFallbackName = ""; group = defaultGroup; logo = null; epgId = null; explicitNum = null
+                                    ua = null; referrer = null; cookie = null
+                                    catchupDays = 0; catchupSource = null; catchupType = null
                                 }
                             }
                         }
@@ -318,7 +352,7 @@ object NetworkLoader {
     ): Pair<List<VodMovie>, String> = withContext(Dispatchers.IO) {
         val itemsOut = mutableListOf<VodMovie>()
         var diagnostic = ""
-        runCatching {
+        runCatchingCancellable {
             val (key, baseUrl) = parseVPortalCredentials(rawPortalUrl)
             val targetUrl = if (!customTargetUrl.isNullOrBlank() && customTargetUrl.contains("/api/")) customTargetUrl else baseUrl
             if (!targetUrl.startsWith("http")) {
@@ -351,14 +385,14 @@ object NetworkLoader {
     private fun extractStreamUrl(obj: JSONObject, baseUrl: String): String {
         for (f in listOf("stream_url", "video_url", "file", "stream", "src", "link", "hls", "play_url", "video", "url", "cmd")) {
             val v = obj.optString(f, "").replace("\\/", "/").trim()
-            if (v.startsWith("http") && !isPortalOrImageUrl(v, baseUrl)) return v
+            if (v.startsWith("http") && !isPortalOrNonMediaUrl(v, baseUrl)) return v
         }
         return ""
     }
 
     private fun parseVideoportalJson(body: String, baseUrl: String, sentRequest: JSONObject, out: MutableList<VodMovie>) {
         val cleanBody = body.replace("\\/", "/")
-        if (cleanBody.startsWith("http") && !isPortalOrImageUrl(cleanBody, baseUrl)) {
+        if (cleanBody.startsWith("http") && !isPortalOrNonMediaUrl(cleanBody, baseUrl)) {
             out.add(VodMovie("vp_raw_1", "▶ Воспроизвести", "Видео", null, "", "", "", cleanBody.lines().first().trim(), isFolder = false))
             return
         }
@@ -369,7 +403,8 @@ object NetworkLoader {
             if (rootObj != null) {
                 val rootStream = extractStreamUrl(rootObj, baseUrl)
                 if (rootStream.isNotEmpty()) {
-                    out.add(VodMovie("vp_direct_root", rootObj.optString("title", rootObj.optString("name", "▶ Смотреть")), "Видео", rootObj.optString("poster"), rootObj.optString("description", ""), rootObj.optString("year", ""), rootObj.optString("rating", ""), rootStream, false))
+                    val rootPoster = resolveRelativeUrl(rootObj.optString("poster"), baseUrl).ifEmpty { null }
+                    out.add(VodMovie("vp_direct_root", rootObj.optString("title", rootObj.optString("name", "▶ Смотреть")), "Видео", rootPoster, rootObj.optString("description", ""), rootObj.optString("year", ""), rootObj.optString("rating", ""), rootStream, false))
                 }
             }
             val arr = when {
@@ -377,12 +412,14 @@ object NetworkLoader {
                 rootObj != null -> rootObj.optJSONArray("items") ?: rootObj.optJSONArray("data") ?: rootObj.optJSONArray("movies") ?: rootObj.optJSONArray("playlist") ?: rootObj.optJSONArray("streams") ?: rootObj.optJSONArray("files") ?: JSONArray()
                 else -> JSONArray()
             }
+            val seenIds = mutableMapOf<String, Int>()
             for (i in 0 until arr.length()) {
                 val item = arr.optJSONObject(i) ?: continue
                 val itemType = item.optString("type", "").lowercase()
                 if (itemType == "search" || itemType == "input") continue
                 val title = item.optString("title").ifEmpty { item.optString("name") }.ifEmpty { item.optString("label") }.ifEmpty { "Серия #${i + 1}" }
-                val poster = item.optString("poster").ifEmpty { item.optString("logo") }.ifEmpty { item.optString("icon") }.ifEmpty { item.optString("cover") }.ifEmpty { item.optString("img") }.ifEmpty { item.optString("pic") }
+                val rawPoster = item.optString("poster").ifEmpty { item.optString("logo") }.ifEmpty { item.optString("icon") }.ifEmpty { item.optString("cover") }.ifEmpty { item.optString("img") }.ifEmpty { item.optString("pic") }
+                val poster = resolveRelativeUrl(rawPoster, baseUrl).ifEmpty { null }
                 val desc = item.optString("description").ifEmpty { item.optString("plot") }
                 val year = item.optString("year", "")
                 val rating = item.optString("rating", item.optString("rating_kp", ""))
@@ -400,11 +437,20 @@ object NetworkLoader {
                         if (item.has(f)) mergedReq.put(f, item.get(f))
                     }
                 }
-                if (directStream.isNotEmpty()) out.add(VodMovie("vp_media_${i}_${System.nanoTime()}", title, "Видео", poster.ifEmpty { null }, desc, year, rating, directStream, false, mergedReq.toString(), rootUrl))
-                else out.add(VodMovie("vp_node_${i}_${System.nanoTime()}", title, if (itemType == "category") "Категория" else "Папка / Серия", poster.ifEmpty { null }, desc, year, rating, "", true, mergedReq.toString(), rootUrl))
+                val reqNoKey = JSONObject(mergedReq.toString()).apply { remove("key") }.toString()
+                val baseStableId = stableHashId(if (directStream.isNotEmpty()) "vp_m" else "vp_n", "${title}_${directStream}_${reqNoKey}")
+                val dup = (seenIds[baseStableId] ?: 0) + 1
+                seenIds[baseStableId] = dup
+                val finalId = if (dup == 1) baseStableId else "${baseStableId}_$dup"
+
+                if (directStream.isNotEmpty()) {
+                    out.add(VodMovie(finalId, title, "Видео", poster, desc, year, rating, directStream, false, mergedReq.toString(), rootUrl))
+                } else {
+                    out.add(VodMovie(finalId, title, if (itemType == "category") "Категория" else "Папка / Серия", poster, desc, year, rating, "", true, mergedReq.toString(), rootUrl))
+                }
             }
             if (out.isEmpty()) {
-                val mediaUrls = urlExtractRegex.findAll(cleanBody).map { it.groupValues[1] }.filter { !isPortalOrImageUrl(it, baseUrl) }.distinct().toList()
+                val mediaUrls = urlExtractRegex.findAll(cleanBody).map { it.groupValues[1] }.filter { !isPortalOrNonMediaUrl(it, baseUrl) }.distinct().toList()
                 mediaUrls.forEachIndexed { idx, sUrl -> out.add(VodMovie("vp_auto_$idx", if (mediaUrls.size == 1) "▶ Воспроизвести" else "▶ Поток #${idx + 1}", "Видео", null, "", "", "", sUrl, false)) }
             }
             val curLimit = sentRequest.optInt("limit", PAGE_SIZE).coerceAtLeast(20)
@@ -449,7 +495,7 @@ object NetworkLoader {
         val channels = mutableListOf<Channel>()
         val movies = mutableListOf<VodMovie>()
         lastStalkerError = null
-        runCatching {
+        runCatchingCancellable {
             val base = normalizeStalkerBase(portalUrl)
             val cookie = "mac=${java.net.URLEncoder.encode(mac, "UTF-8")}; stb_lang=ru; timezone=Europe/Moscow"
             val token = getStalkerToken(base, mac, cookie, forceRefresh = true)
@@ -504,8 +550,10 @@ object NetworkLoader {
                                 val item = data.getJSONObject(i)
                                 val cmd = item.optString("cmd").trim()
                                 if (cmd.isNotEmpty()) {
+                                    val title = item.optString("name", "Фильм")
                                     val poster = item.optString("screenshot_uri").let { if (it.startsWith("/")) base.trimEnd('/') + it else it }
-                                    movies.add(VodMovie("stk_vod_${page}_$i", item.optString("name", "Фильм"), "Stalker VOD", poster.ifEmpty { null }, item.optString("description"), item.optString("year"), item.optString("rating_imdb"), "stalker_vod:::${base}|||${mac}|||${cmd}"))
+                                    val vodId = stableHashId("stk_vod", "${item.optString("id")}_$cmd")
+                                    movies.add(VodMovie(vodId, title, "Stalker VOD", poster.ifEmpty { null }, item.optString("description"), item.optString("year"), item.optString("rating_imdb"), "stalker_vod:::${base}|||${mac}|||${cmd}"))
                                 }
                             }
                         }
@@ -533,7 +581,7 @@ object NetworkLoader {
         val base = parts[0]; val mac = parts[1]; val rawCmd = parts[2]
         val directFallback = rawCmd.removePrefix("ffrt ").removePrefix("ffmpeg ").trim()
 
-        runCatching {
+        runCatchingCancellable {
             val cookie = "mac=${java.net.URLEncoder.encode(mac, "UTF-8")}; stb_lang=ru; timezone=Europe/Moscow"
             val typeParam = if (isVod) "vod" else "itv"
             for (attempt in 0..1) {
@@ -571,7 +619,7 @@ object NetworkLoader {
         }.getOrDefault(0L)
     }
 
-   suspend fun loadFullEpgSchedule(
+    suspend fun loadFullEpgSchedule(
         epgUrl: String,
         archiveDays: Int = 3,
         epgOffsetHours: Int = 0,
@@ -592,7 +640,7 @@ object NetworkLoader {
         val timeFmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
         val shortTimeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
 
-        runCatching {
+        runCatchingCancellable {
             val cacheFile = context?.let { File(it.cacheDir, "epg_${epgUrl.trim().hashCode()}.bin") }
             val cacheFresh = cacheFile != null && cacheFile.exists() && !forceRefresh &&
                 (nowMs - cacheFile.lastModified()) < 6L * 3600L * 1000L && isValidEpgFile(cacheFile)
@@ -653,9 +701,9 @@ object NetworkLoader {
                         while (eventType != XmlPullParser.END_DOCUMENT) {
                             when (eventType) {
                                 XmlPullParser.START_TAG -> when (parser.name) {
-                                   "channel" -> {
-                                        curChannelTagId = parser.getAttributeValue(null, "id")
-                                        val cid = curChannelTagId
+                                    "channel" -> {
+                                        val cid = parser.getAttributeValue(null, "id")
+                                        curChannelTagId = cid
                                         if (hasChannelFilter && cid != null) {
                                             val low = cid.lowercase()
                                             val norm = normalizeChannelKey(cid)
@@ -664,23 +712,26 @@ object NetworkLoader {
                                             }
                                         }
                                     }
-                                    "display-name" -> if (curChannelTagId != null) {
-                                        val rawName = runCatching { parser.nextText().trim() }.getOrDefault("")
-                                        if (rawName.isNotEmpty()) {
-                                            val low = rawName.lowercase()
-                                            val norm = normalizeChannelKey(rawName)
-                                            val matchesFilter = !hasChannelFilter || curChannelTagId in wantedChannelIds ||
-                                                low in allowedChannelKeys || (norm.isNotEmpty() && norm in allowedChannelKeys)
-                                            if (matchesFilter) {
-                                                wantedChannelIds.add(curChannelTagId!!)
-                                                aliasToId[low] = curChannelTagId!!
-                                                if (norm.isNotEmpty()) aliasToId[norm] = curChannelTagId!!
+                                    "display-name" -> {
+                                        val cid = curChannelTagId
+                                        if (cid != null) {
+                                            val rawName = runCatching { parser.nextText().trim() }.getOrDefault("")
+                                            if (rawName.isNotEmpty()) {
+                                                val low = rawName.lowercase()
+                                                val norm = normalizeChannelKey(rawName)
+                                                val matchesFilter = !hasChannelFilter || cid in wantedChannelIds ||
+                                                    low in allowedChannelKeys || (norm.isNotEmpty() && norm in allowedChannelKeys)
+                                                if (matchesFilter) {
+                                                    wantedChannelIds.add(cid)
+                                                    aliasToId[low] = cid
+                                                    if (norm.isNotEmpty()) aliasToId[norm] = cid
+                                                }
                                             }
                                         }
                                     }
                                     "programme" -> {
-                                        progChannelId = parser.getAttributeValue(null, "channel")
-                                        val pid = progChannelId
+                                        val pid = parser.getAttributeValue(null, "channel")
+                                        progChannelId = pid
                                         val isWanted = !hasChannelFilter || (pid != null && (
                                             pid in wantedChannelIds ||
                                                 pid.lowercase() in allowedChannelKeys ||
@@ -695,14 +746,17 @@ object NetworkLoader {
                                         }
                                         hasTitleForProg = false
                                     }
-                                    "title" -> if (progChannelId != null && isProgInWindow && !hasTitleForProg) {
-                                        val title = runCatching { parser.nextText().trim() }.getOrDefault("")
-                                        if (title.isNotEmpty()) {
-                                            val list = rawById.getOrPut(progChannelId!!) { mutableListOf() }
-                                            if (list.size < maxItemsPerChannel) {
-                                                list.add(EpgProgramItem(title, progStart, progStop, "${timeFmt.format(Date(progStart))} - ${shortTimeFmt.format(Date(progStop))}"))
+                                    "title" -> {
+                                        val pid = progChannelId
+                                        if (pid != null && isProgInWindow && !hasTitleForProg) {
+                                            val title = runCatching { parser.nextText().trim() }.getOrDefault("")
+                                            if (title.isNotEmpty()) {
+                                                val list = rawById.getOrPut(pid) { mutableListOf() }
+                                                if (list.size < maxItemsPerChannel) {
+                                                    list.add(EpgProgramItem(title, progStart, progStop, "${timeFmt.format(Date(progStart))} - ${shortTimeFmt.format(Date(progStop))}"))
+                                                }
+                                                hasTitleForProg = true
                                             }
-                                            hasTitleForProg = true
                                         }
                                     }
                                 }
@@ -775,8 +829,12 @@ class SimpleQrWebServer(
         private set
     @Volatile var lastError: String? = null
         private set
+    @Volatile private var startedAtMs: Long = 0L
 
-    val accessToken: String = buildToken()
+    private val failedAttemptsByIp = ConcurrentHashMap<String, Pair<Int, Long>>()
+
+    var accessToken: String = buildToken()
+        private set
     var onStatusChanged: ((Boolean, String?) -> Unit)? = null
 
     fun getAccessUrl(ip: String): String = "http://$ip:$port/$accessToken/"
@@ -784,11 +842,17 @@ class SimpleQrWebServer(
     private fun buildToken(): String {
         val alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
         val rnd = SecureRandom()
-        return (1..10).map { alphabet[rnd.nextInt(alphabet.length)] }.joinToString("")
+        return (1..12).map { alphabet[rnd.nextInt(alphabet.length)] }.joinToString("")
     }
+
+    private fun isTokenExpired(): Boolean =
+        startedAtMs > 0L && (System.currentTimeMillis() - startedAtMs) > 5L * 60_000L
 
     fun start() {
         if (running) return
+        accessToken = buildToken()
+        startedAtMs = System.currentTimeMillis()
+        failedAttemptsByIp.clear()
         running = true
         thread(isDaemon = true) {
             runCatching {
@@ -801,6 +865,11 @@ class SimpleQrWebServer(
                 onStatusChanged?.invoke(true, null)
                 while (running) {
                     val client = ss.accept()
+                    if (isTokenExpired()) {
+                        runCatching { client.close() }
+                        stopWithMessage(if (isRu) "Срок действия QR-ссылки истёк (5 мин)" else "QR link expired (5 min)")
+                        break
+                    }
                     thread(isDaemon = true) { handle(client) }
                 }
             }.onFailure { e ->
@@ -813,12 +882,17 @@ class SimpleQrWebServer(
         }
     }
 
-    fun stop() {
+    private fun stopWithMessage(msg: String?) {
         running = false
         isListening = false
+        lastError = msg
         runCatching { serverSocket?.close() }
         serverSocket = null
-        onStatusChanged?.invoke(false, null)
+        onStatusChanged?.invoke(false, msg)
+    }
+
+    fun stop() {
+        stopWithMessage(null)
     }
 
     private fun readAsciiLine(input: InputStream, maxBytes: Int = 8192): String? {
@@ -841,6 +915,14 @@ class SimpleQrWebServer(
     private fun handle(socket: java.net.Socket) {
         socket.use { s ->
             s.soTimeout = 10_000
+            val remoteIp = s.inetAddress?.hostAddress ?: "unknown"
+            val now = System.currentTimeMillis()
+            val curFail = failedAttemptsByIp[remoteIp]
+            if (curFail != null && (now - curFail.second) < 60_000L && curFail.first >= 10) {
+                runCatching { sendResponse(s.getOutputStream(), "429 Too Many Requests", "<html><body>429 Too Many Requests</body></html>") }
+                return
+            }
+
             val input = BufferedInputStream(s.getInputStream())
             val out = s.getOutputStream()
             val reqLine = readAsciiLine(input) ?: return
@@ -860,7 +942,9 @@ class SimpleQrWebServer(
                 headerCount++
             }
 
-            if (reqPath != "/$accessToken" && reqPath != "/$accessToken/") {
+            if (isTokenExpired() || (reqPath != "/$accessToken" && reqPath != "/$accessToken/")) {
+                val prevCount = if (curFail != null && (now - curFail.second) < 60_000L) curFail.first else 0
+                failedAttemptsByIp[remoteIp] = (prevCount + 1) to now
                 sendResponse(out, "403 Forbidden", "<html><body style='background:#121417;color:#EF4444;font-family:sans-serif;text-align:center;padding:40px;'><h2>403 Forbidden — Invalid or expired QR link</h2></body></html>")
                 return
             }
@@ -900,8 +984,12 @@ class SimpleQrWebServer(
                         k to v
                     }
                 onReceived(map)
-                val ok = if (isRu) "✅ Отправлено в CCTV Plus!" else "✅ Sent to CCTV Plus!"
+                val ok = if (isRu) "✅ Отправлено в CCTV Plus! Сервер закрыт." else "✅ Sent to CCTV Plus! Server closed."
                 sendResponse(out, "200 OK", "<html><body style='background:#121417;color:#10B981;font-family:sans-serif;text-align:center;padding:40px;'><h2>$ok</h2></body></html>")
+                thread(isDaemon = true) {
+                    runCatching { Thread.sleep(400) }
+                    stopWithMessage(null)
+                }
             } else {
                 sendResponse(out, "200 OK", buildHtmlForm())
             }
