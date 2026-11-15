@@ -3,6 +3,9 @@ name: Build CCTV Plus v2.0 APK
 on:
   push:
     branches: [ "main", "master" ]
+    paths-ignore:
+      - "README.md"
+      - "LICENSE"
   workflow_dispatch:
 
 concurrency:
