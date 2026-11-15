@@ -66,6 +66,8 @@ object NetworkLoader {
 
     private data class CachedStalkerToken(val token: String, val timestampMs: Long)
     private val stalkerTokenCache = ConcurrentHashMap<String, CachedStalkerToken>()
+    @Volatile var lastM3uError: String? = null
+        private set
 
     fun parseVPortalCredentials(rawUrl: String): Pair<String, String> {
         val key = keyExtractRegex.find(rawUrl)?.groupValues?.get(1)?.trim() ?: ""
@@ -153,6 +155,7 @@ object NetworkLoader {
         val channels = mutableListOf<Channel>()
         val movies = mutableListOf<VodMovie>()
         var embeddedEpgUrl: String? = null
+        lastM3uError = null
 
         runCatching {
             var tempFileToDelete: File? = null
@@ -189,9 +192,11 @@ object NetworkLoader {
                             }
                         } else {
                             tmpFile.delete()
+                            lastM3uError = "Invalid M3U response (not a playlist)"
                             if (cacheFile != null && cacheFile.exists()) FileInputStream(cacheFile) else null
                         }
                     } else {
+                        lastM3uError = "HTTP ${resp.code}"
                         resp.close()
                         if (cacheFile != null && cacheFile.exists()) FileInputStream(cacheFile) else null
                     }
@@ -294,6 +299,11 @@ object NetworkLoader {
             } finally {
                 tempFileToDelete?.delete()
             }
+        }.onFailure { err ->
+            lastM3uError = err.localizedMessage ?: "Network error"
+        }
+        if (channels.isNotEmpty() || movies.isNotEmpty()) {
+            lastM3uError = null
         }
         M3uParseResult(channels, movies, embeddedEpgUrl)
     }
@@ -551,15 +561,18 @@ object NetworkLoader {
         }.getOrDefault(0L)
     }
 
-    suspend fun loadFullEpgSchedule(
+   suspend fun loadFullEpgSchedule(
         epgUrl: String,
         archiveDays: Int = 3,
         epgOffsetHours: Int = 0,
         context: Context? = null,
-        forceRefresh: Boolean = false
+        forceRefresh: Boolean = false,
+        allowedChannelKeys: Set<String> = emptySet()
     ): Map<String, List<EpgProgramItem>> = withContext(Dispatchers.IO) {
         val rawById = mutableMapOf<String, MutableList<EpgProgramItem>>()
         val aliasToId = mutableMapOf<String, String>()
+        val wantedChannelIds = mutableSetOf<String>()
+        val hasChannelFilter = allowedChannelKeys.isNotEmpty()
         val nowMs = System.currentTimeMillis()
         val daysBack = archiveDays.coerceIn(1, 7).toLong()
         val windowStart = nowMs - (daysBack * 24L * 3600L * 1000L)
@@ -630,20 +643,46 @@ object NetworkLoader {
                         while (eventType != XmlPullParser.END_DOCUMENT) {
                             when (eventType) {
                                 XmlPullParser.START_TAG -> when (parser.name) {
-                                    "channel" -> curChannelTagId = parser.getAttributeValue(null, "id")
+                                   "channel" -> {
+                                        curChannelTagId = parser.getAttributeValue(null, "id")
+                                        val cid = curChannelTagId
+                                        if (hasChannelFilter && cid != null) {
+                                            val low = cid.lowercase()
+                                            val norm = normalizeChannelKey(cid)
+                                            if (low in allowedChannelKeys || (norm.isNotEmpty() && norm in allowedChannelKeys)) {
+                                                wantedChannelIds.add(cid)
+                                            }
+                                        }
+                                    }
                                     "display-name" -> if (curChannelTagId != null) {
                                         val rawName = runCatching { parser.nextText().trim() }.getOrDefault("")
                                         if (rawName.isNotEmpty()) {
-                                            aliasToId[rawName.lowercase()] = curChannelTagId!!
+                                            val low = rawName.lowercase()
                                             val norm = normalizeChannelKey(rawName)
-                                            if (norm.isNotEmpty()) aliasToId[norm] = curChannelTagId!!
+                                            val matchesFilter = !hasChannelFilter || curChannelTagId in wantedChannelIds ||
+                                                low in allowedChannelKeys || (norm.isNotEmpty() && norm in allowedChannelKeys)
+                                            if (matchesFilter) {
+                                                wantedChannelIds.add(curChannelTagId!!)
+                                                aliasToId[low] = curChannelTagId!!
+                                                if (norm.isNotEmpty()) aliasToId[norm] = curChannelTagId!!
+                                            }
                                         }
                                     }
                                     "programme" -> {
                                         progChannelId = parser.getAttributeValue(null, "channel")
-                                        progStart = parseXmlDateFast(parser.getAttributeValue(null, "start")) + offsetMs
-                                        progStop = parseXmlDateFast(parser.getAttributeValue(null, "stop")) + offsetMs
-                                        isProgInWindow = progStop >= windowStart && progStart <= windowEnd
+                                        val pid = progChannelId
+                                        val isWanted = !hasChannelFilter || (pid != null && (
+                                            pid in wantedChannelIds ||
+                                                pid.lowercase() in allowedChannelKeys ||
+                                                normalizeChannelKey(pid).let { it.isNotEmpty() && it in allowedChannelKeys }
+                                            ))
+                                        if (isWanted) {
+                                            progStart = parseXmlDateFast(parser.getAttributeValue(null, "start")) + offsetMs
+                                            progStop = parseXmlDateFast(parser.getAttributeValue(null, "stop")) + offsetMs
+                                            isProgInWindow = progStop >= windowStart && progStart <= windowEnd
+                                        } else {
+                                            isProgInWindow = false
+                                        }
                                         hasTitleForProg = false
                                     }
                                     "title" -> if (progChannelId != null && isProgInWindow && !hasTitleForProg) {
@@ -877,10 +916,10 @@ class SimpleQrWebServer(
             "button{width:100%;padding:14px;background:#10B981;color:#000;font-weight:bold;border:none;border-radius:10px;font-size:16px;}</style></head>" +
             "<body><div class='box'><h2 style='color:#10B981;margin-top:0;'>📺 $title</h2>" +
             "<form method='POST' action='/$accessToken/'>" +
-            "<label>🏷 Название плейлиста:</label><input name='m3u_name' placeholder='TVLider Основной'/>" +
-            "<label>📺 Ссылка M3U / M3U8:</label><input name='m3u' placeholder='http://.../playlist.m3u8'/>" +
-            "<label>🏷 Название EPG:</label><input name='epg_name' placeholder='Программа TVLider'/>" +
-            "<label>📅 Ссылка на EPG (.xml / .xml.gz):</label><input name='epg' placeholder='http://.../epg.xml.gz'/>" +
+            "<label>🏷 " + (if (isRu) "Название плейлиста:" else "Playlist Name:") + "</label><input name='m3u_name' placeholder='My IPTV'/>" +
+            "<label>📺 " + (if (isRu) "Ссылка M3U / M3U8:" else "M3U / M3U8 URL:") + "</label><input name='m3u' placeholder='http://.../playlist.m3u8'/>" +
+            "<label>🏷 " + (if (isRu) "Название EPG:" else "EPG Name:") + "</label><input name='epg_name' placeholder='TV Guide'/>" +
+            "<label>📅 " + (if (isRu) "Ссылка на EPG (.xml / .xml.gz):" else "EPG URL (.xml / .xml.gz):") + "</label><input name='epg' placeholder='http://.../epg.xml.gz'/>" +
             "<label>🎬 VPortal (portal::[key:...]http://...):</label><input name='vportal' placeholder='portal::[key:...]http://...'/>" +
             "<label>📡 Stalker Portal URL:</label><input name='stalker_url' placeholder='http://portal.com/stalker_portal/c/'/>" +
             "<label>🔑 Stalker MAC:</label><input name='stalker_mac' placeholder='00:1A:79:XX:XX:XX'/>" +
