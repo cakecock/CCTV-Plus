@@ -894,7 +894,6 @@ fun SleepTimerDialog(S: Strings, theme: AppThemePalette, currentMinutesLeft: Int
 }
 
 @Composable
-@Composable
 fun TiviMateTvOverlay(
     S: Strings, theme: AppThemePalette, channels: List<Channel>, hiddenGroups: Set<String>,
     epgScheduleMap: Map<String, List<EpgProgramItem>>, reminders: List<ProgramReminder>,
