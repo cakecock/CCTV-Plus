@@ -91,12 +91,14 @@ jobs:
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
               <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
               <uses-feature android:name="android.software.leanback" android:required="false" />
               <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
               <application
                   android:allowBackup="false"
+                  android:dataExtractionRules="@xml/data_extraction_rules"
                   android:icon="@drawable/ic_cctv_launcher"
                   android:roundIcon="@drawable/ic_cctv_launcher"
                   android:banner="@drawable/ic_cctv_launcher"
@@ -120,6 +122,10 @@ jobs:
                       </intent-filter>
                   </activity>
 
+                  <receiver
+                      android:name=".ReminderReceiver"
+                      android:exported="false" />
+
                   <provider
                       android:name="androidx.core.content.FileProvider"
                       android:authorities="com.myiptv.app.provider"
@@ -139,6 +145,32 @@ jobs:
               <external-files-path name="updates" path="." />
               <cache-path name="cache_updates" path="." />
           </paths>
+          EOF
+
+          cat << 'EOF' > app/src/main/res/xml/data_extraction_rules.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <data-extraction-rules>
+              <cloud-backup>
+                  <exclude domain="sharedpref" path="." />
+              </cloud-backup>
+              <device-transfer>
+                  <exclude domain="sharedpref" path="." />
+              </device-transfer>
+          </data-extraction-rules>
+          EOF
+
+          cat << 'EOF' > app/proguard-rules.pro
+          -keep class com.myiptv.app.ReminderReceiver { *; }
+          -keep class androidx.media3.decoder.ffmpeg.** { *; }
+          -dontwarn androidx.media3.decoder.ffmpeg.**
+          -keepclasseswithmembernames class * {
+              native <methods>;
+          }
+          -dontwarn org.bouncycastle.**
+          -dontwarn org.conscrypt.**
+          -dontwarn org.openjsse.**
+          -dontwarn okhttp3.**
+          -dontwarn okio.**
           EOF
 
           cat << 'EOF' > settings.gradle.kts
@@ -190,6 +222,9 @@ jobs:
                   targetSdk = 34
                   versionCode = ${{ github.run_number }}
                   versionName = "2.0.${{ github.run_number }}"
+                  ndk {
+                      abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+                  }
               }
 
               signingConfigs {
@@ -208,8 +243,12 @@ jobs:
                       signingConfig = signingConfigs.getByName("releaseSign")
                   }
                   release {
-                      isMinifyEnabled = false
-                      isShrinkResources = false
+                      isMinifyEnabled = true
+                      isShrinkResources = true
+                      proguardFiles(
+                          getDefaultProguardFile("proguard-android-optimize.txt"),
+                          "proguard-rules.pro"
+                      )
                       signingConfig = signingConfigs.getByName("releaseSign")
                   }
               }
@@ -279,6 +318,16 @@ jobs:
           files: |
             /tmp/CCTV-Plus.apk
             /tmp/CCTV-Plus.apk.sha256
+
+      - name: Cleanup Old Releases (keep last 3)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          OLD_TAGS=$(gh release list --repo "${{ github.repository }}" --limit 200 --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName')
+          for TAG in $OLD_TAGS; do
+            echo "Deleting old release: $TAG"
+            gh release delete "$TAG" --repo "${{ github.repository }}" --yes --cleanup-tag || true
+          done
 
       - name: Save APK and Version Directly to Repository
         run: |
