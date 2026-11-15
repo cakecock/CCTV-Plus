@@ -676,7 +676,7 @@ class MainActivity : ComponentActivity() {
                             val nowProg = remember(curSchedule, epgMinuteTickMs) { curSchedule.find { epgMinuteTickMs in it.startMs..it.stopMs } }
                             val isSmartphone = deviceType == "mobile"
                             val fsFocusRequester = remember { FocusRequester() }
-                            val anyOverlayOpen = showTiviMateOverlay || showPlayerQuickMenu || showQuickChannelPicker || showSleepDialog || showAudioTracksDialog
+                            val anyOverlayOpen = showTiviMateOverlay || showPlayerQuickMenu || showQuickChannelPicker || showSleepDialog || showAudioTracksDialog || showQualityDialog
 
                             LaunchedEffect(isFullscreen, anyOverlayOpen) {
                                 if (isFullscreen && !anyOverlayOpen) {
@@ -689,6 +689,7 @@ class MainActivity : ComponentActivity() {
                                     S, themePalette, isVod, isArchive, playerEngine, resizeLabels[playerResizeMode], playbackSpeed, (sleepSecondsLeft + 59) / 60, isSmartphone,
                                     onCycleResize = { playerResizeMode = (playerResizeMode + 1) % 3; prefs.edit().putInt("player_resize", playerResizeMode).apply() },
                                     onOpenAudio = { showPlayerQuickMenu = false; showAudioTracksDialog = true },
+                                    onOpenQuality = { showPlayerQuickMenu = false; showQualityDialog = true },
                                     onCycleSpeed = { playbackSpeed = when (playbackSpeed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 1f } },
                                     onSeekBack10 = { if (isVod) { seekCounter++; seekCommand = seekCounter to -10000L } else archiveSeekOffsetSec = (archiveSeekOffsetSec - 10L).coerceAtLeast(0L) },
                                     onSeekFwd10 = { if (isVod) { seekCounter++; seekCommand = seekCounter to 10000L } else archiveSeekOffsetSec += 10L },
@@ -754,6 +755,12 @@ class MainActivity : ComponentActivity() {
                                     isRu = isRu,
                                     isPipMode = isInPipModeState,
                                     onNextChannel = if (!isVod) { { zapChannelStep(1) } } else null,
+                                    showQualitySelectorDialog = showQualityDialog,
+                                    onDismissQualitySelector = { showQualityDialog = false },
+                                    enableDoubleTapSeek = (isVod || isArchive) && controlMode == "touch",
+                                    onDoubleTapSeekDelta = if (isArchive) {
+                                        { deltaMs -> archiveSeekOffsetSec = (archiveSeekOffsetSec + deltaMs / 1000L).coerceAtLeast(0L) }
+                                    } else null,
                                     modifier = Modifier.fillMaxSize()
                                 )
 
@@ -823,6 +830,7 @@ class MainActivity : ComponentActivity() {
                                                 if (playerEngine == 0) {
                                                     item { PlayerActionPill("📐 ${resizeLabels[playerResizeMode]}") { playerResizeMode = (playerResizeMode + 1) % 3; prefs.edit().putInt("player_resize", playerResizeMode).apply() } }
                                                     item { PlayerActionPill(if (S.isRu) "🔊 Звук" else "🔊 Audio") { showAudioTracksDialog = true } }
+                                                    item { PlayerActionPill(if (S.isRu) "🎞 Качество" else "🎞 Quality") { showQualityDialog = true } }
                                                     if (isArchive) {
                                                         item { PlayerActionPill("${playbackSpeed}x", Color(0xFF38BDF8)) { playbackSpeed = when (playbackSpeed) { 1f -> 1.25f; 1.25f -> 1.5f; 1.5f -> 2f; else -> 1f } } }
                                                         item { PlayerActionPill(if (S.isRu) "-10с" else "-10s") { archiveSeekOffsetSec = (archiveSeekOffsetSec - 10L).coerceAtLeast(0L) } }
@@ -946,7 +954,7 @@ class MainActivity : ComponentActivity() {
 fun PlayerQuickMenuDialog(
     S: Strings, theme: AppThemePalette, isVod: Boolean, isArchive: Boolean, playerEngine: Int,
     resizeLabel: String, playbackSpeed: Float, sleepMinutesLeft: Int, isSmartphone: Boolean,
-    onCycleResize: () -> Unit, onOpenAudio: () -> Unit, onCycleSpeed: () -> Unit,
+    onCycleResize: () -> Unit, onOpenAudio: () -> Unit, onOpenQuality: () -> Unit = {}, onCycleSpeed: () -> Unit,
     onSeekBack10: () -> Unit, onSeekFwd10: () -> Unit, onOpenSleep: () -> Unit,
     onOpenChannels: () -> Unit, onOpenTvGuide: () -> Unit, onOpenMultiView: () -> Unit, onDismiss: () -> Unit
 ) {
@@ -963,6 +971,9 @@ fun PlayerQuickMenuDialog(
                     }
                     OutlinedButton(onClick = onOpenAudio, modifier = Modifier.fillMaxWidth()) {
                         Text(if (S.isRu) "🔊 Звуковая дорожка" else "🔊 Audio Track", color = theme.text)
+                    }
+                    OutlinedButton(onClick = onOpenQuality, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (S.isRu) "🎞 Качество видео" else "🎞 Video Quality", color = theme.text)
                     }
                     if (isVod || isArchive) {
                         OutlinedButton(onClick = onCycleSpeed, modifier = Modifier.fillMaxWidth()) {
