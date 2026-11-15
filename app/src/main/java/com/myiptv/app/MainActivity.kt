@@ -253,6 +253,7 @@ class MainActivity : ComponentActivity() {
             var isMultiViewMode by remember { mutableStateOf(false) }
             var showTiviMateOverlay by remember { mutableStateOf(false) }
             var showAudioTracksDialog by remember { mutableStateOf(false) }
+            var showQualityDialog by remember { mutableStateOf(false) }
             var showHiddenGroupsDialog by remember { mutableStateOf(false) }
             var showSleepDialog by remember { mutableStateOf(false) }
             var showPlayerQuickMenu by remember { mutableStateOf(false) }
