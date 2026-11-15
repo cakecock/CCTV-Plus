@@ -1011,7 +1011,8 @@ class MainActivity : ComponentActivity() {
                                         onToggleFavorite = { ch -> val next = favoriteIds.toMutableSet(); if (!next.add(ch.id)) next.remove(ch.id); favoriteIds = next; prefs.edit().putStringSet("favs", next).apply() },
                                         onFullscreen = { val ch = currentChannel ?: return@LiveTvScreen; val url = activeArchiveUrl ?: ch.streamUrl; if (playerEngine == 2) openExternalSafe(url, ch.name) else isFullscreen = true },
                                         onOpenSettings = { currentTab = 2 },
-                                        onNextChannel = { zapChannelStep(1) }
+                                        onNextChannel = { zapChannelStep(1) },
+                                        playlistError = playlistErrorText
                                     )
                                     1 -> VodScreen(
                                         S, themePalette, vodItems, vodHistory, currentVodFolderTitle, vodFolderStack.isNotEmpty(), isLoadingMoreVod, vodNoticeMessage, maskSensitiveKeys(vportalDiagnostic),
@@ -1227,7 +1228,8 @@ fun LiveTvScreen(
     currentTimeMs: Long, clockPosition: Int, playerEngine: Int, playerResizeMode: Int, playerBufferMode: Int, playerDefaultUa: String,
     onSelectChannel: (Channel) -> Unit, onOpenEpgDialog: (Channel) -> Unit, onOpenHiddenGroups: () -> Unit,
     onResetToLive: () -> Unit, onToggleFavorite: (Channel) -> Unit, onFullscreen: () -> Unit, onOpenSettings: () -> Unit,
-    onNextChannel: (() -> Unit)? = null
+    onNextChannel: (() -> Unit)? = null,
+    playlistError: String? = null
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
         if (playlists.isNotEmpty()) {
@@ -1236,8 +1238,15 @@ fun LiveTvScreen(
         }
         if (channels.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) { Text(S.noChannels, fontSize = 19.sp, color = theme.subtext); Spacer(Modifier.height(16.dp)); Button(onClick = onOpenSettings) { Text(S.goToSettings) } }
-            }
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)) {
+                    Text(S.noChannels, fontSize = 19.sp, color = theme.subtext)
+                    if (!playlistError.isNullOrBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("⚠️ $playlistError", fontSize = 13.sp, color = Color(0xFFF59E0B))
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Button(onClick = onOpenSettings) { Text(S.goToSettings) }
+                }
             return
         }
 
