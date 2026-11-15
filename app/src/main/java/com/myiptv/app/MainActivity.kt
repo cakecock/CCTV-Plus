@@ -153,6 +153,16 @@ private fun cancelReminderAlarm(context: Context, rem: ProgramReminder) {
     runCatching { am.cancel(pi) }
 }
 
+class BootReminderReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        val prefs = context.getSharedPreferences("cctv_plus_prefs", Context.MODE_PRIVATE)
+        loadSavedReminders(prefs).forEach { rem ->
+            scheduleReminderAlarm(context, rem)
+        }
+    }
+}
+
 fun findChannelSchedule(ch: Channel, epgMap: Map<String, List<EpgProgramItem>>): List<EpgProgramItem> {
     if (epgMap.isEmpty()) return emptyList()
     ch.epgId?.takeIf { it.isNotBlank() }?.let { id ->
@@ -369,6 +379,8 @@ class MainActivity : ComponentActivity() {
             var lastVodSavedAtMs by remember { mutableStateOf(0L) }
             var epgLoadJob by remember { mutableStateOf<Job?>(null) }
             var reloadJob by remember { mutableStateOf<Job?>(null) }
+            var epgLoadSeq by remember { mutableIntStateOf(0) }
+            var reloadSeq by remember { mutableIntStateOf(0) }
 
             val scope = rememberCoroutineScope()
             val visibleChannels = remember(channels, hiddenGroups) { channels.filterNot { hiddenGroups.contains(it.group) } }
@@ -452,7 +464,7 @@ class MainActivity : ComponentActivity() {
                     "BUILTIN_IPTVX_LITE" -> listOf(EPG_URL_IPTVX_LITE, EPG_URL_TVLIDER)
                     "BUILTIN_IPTVX_FULL" -> listOf(EPG_URL_IPTVX_FULL, EPG_URL_IPTVX_LITE)
                     "AUTO_PLAYLIST" -> embeddedList + listOf(EPG_URL_IPTVX_LITE, EPG_URL_TVLIDER)
-                    else -> listOfNotNull(customSelected?.takeIf { it.isNotBlank() }) + embeddedList + listOf(EPG_URL_IPTVX_LITE, EPG_URL_TVLIDER)
+                    else -> listOfNotNull(customSelected?.takeIf { it.isNotBlank() })
                 }.distinct()
 
                 val allowedKeys = channelsSnapshot.flatMap { ch ->
@@ -466,6 +478,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }.toSet()
 
+                val myEpgSeq = ++epgLoadSeq
                 epgLoadJob?.cancel()
                 epgLoadJob = scope.launch {
                     isEpgLoading = true
@@ -489,13 +502,20 @@ class MainActivity : ComponentActivity() {
                         } else {
                             if (isRu) "⚠️ EPG не загружен ($timeStr)" else "⚠️ EPG not loaded ($timeStr)"
                         }
+                    } catch (_: kotlinx.coroutines.CancellationException) {
+                        if (epgLoadSeq == myEpgSeq) {
+                            epgStatusText = if (isRu) "Отменено" else "Cancelled"
+                        }
                     } finally {
-                        isEpgLoading = false
+                        if (epgLoadSeq == myEpgSeq) {
+                            isEpgLoading = false
+                        }
                     }
                 }
             }
            fun reloadAllData(forceRefresh: Boolean = false) {
                 persistLists()
+                val myReloadSeq = ++reloadSeq
                 reloadJob?.cancel()
                 reloadJob = scope.launch {
                     isLoading = true
@@ -529,7 +549,9 @@ class MainActivity : ComponentActivity() {
                     currentChannel = stillValid ?: loadedChannels.firstOrNull { isChannelAllowed(it, parentalEnabled, adultUnlockedSession, lockedGroups) }
                         loadEpgWithStatus(embeddedEpg, forceRefresh, loadedChannels)
                     } finally {
-                        isLoading = false
+                        if (reloadSeq == myReloadSeq) {
+                            isLoading = false
+                        }
                     }
                 }
             }
@@ -663,14 +685,19 @@ class MainActivity : ComponentActivity() {
                 if (vportalUrl.isBlank()) return
                 scope.launch {
                     isLoading = true
-                    val res = NetworkLoader.loadVPortalNode(vportalUrl.trim(), item.targetApiUrl, item.requestPayloadJson)
-                    vportalDiagnostic = res.second; val children = res.first; isLoading = false
-                    if (children.size == 1 && !children.first().isFolder && children.first().streamUrl.isNotBlank()) {
-                        selectedVodForDetails = item.copy(streamUrl = children.first().streamUrl, isFolder = false)
-                    } else if (children.isNotEmpty()) {
-                        vodFolderStack = vodFolderStack + (currentVodFolderTitle to vodItems)
-                        currentVodFolderTitle = item.title; vodItems = children
-                    } else vodNoticeMessage = (if (isRu) "Ответ сервера: " else "Server response: ") + maskSensitiveKeys(vportalDiagnostic)
+                    try {
+                        val res = NetworkLoader.loadVPortalNode(vportalUrl.trim(), item.targetApiUrl, item.requestPayloadJson)
+                        vportalDiagnostic = res.second
+                        val children = res.first
+                        if (children.size == 1 && !children.first().isFolder && children.first().streamUrl.isNotBlank()) {
+                            selectedVodForDetails = item.copy(streamUrl = children.first().streamUrl, isFolder = false)
+                        } else if (children.isNotEmpty()) {
+                            vodFolderStack = vodFolderStack + (currentVodFolderTitle to vodItems)
+                            currentVodFolderTitle = item.title; vodItems = children
+                        } else vodNoticeMessage = (if (isRu) "Ответ сервера: " else "Server response: ") + maskSensitiveKeys(vportalDiagnostic)
+                    } finally {
+                        isLoading = false
+                    }
                 }
             }
 
