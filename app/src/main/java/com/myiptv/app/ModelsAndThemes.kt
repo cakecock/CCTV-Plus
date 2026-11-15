@@ -154,6 +154,18 @@ fun isChannelAllowed(
     return !isAdultCategoryOrChannel("${channel.group} ${channel.name}")
 }
 
+fun isVodAllowed(
+    title: String,
+    category: String,
+    parentalEnabled: Boolean,
+    adultUnlockedSession: Boolean,
+    lockedGroups: Set<String> = emptySet()
+): Boolean {
+    if (!parentalEnabled || adultUnlockedSession) return true
+    if (lockedGroups.contains(category)) return false
+    return !isAdultCategoryOrChannel("$category $title")
+}
+
 fun stableChannelId(streamUrl: String, fallbackName: String = ""): String {
     val source = streamUrl.trim().ifEmpty { fallbackName.trim() }
     val digest = MessageDigest.getInstance("SHA-256").digest(source.toByteArray(Charsets.UTF_8))
@@ -163,24 +175,28 @@ fun stableChannelId(streamUrl: String, fallbackName: String = ""): String {
 
 private const val PIN_HASH_KEY = "parental_pin_hash"
 private const val LEGACY_PIN_KEY = "parental_pin"
-private const val PIN_ITERATIONS = 10_000
+private const val PIN_FAILS_KEY = "pin_failed_attempts"
+private const val PIN_LOCK_UNTIL_KEY = "pin_locked_until_ms"
+private const val PIN_ITERATIONS = 100_000
 private const val PIN_KEY_LEN_BITS = 256
 
-private fun pbkdf2Hash(pin: String, salt: ByteArray): ByteArray {
-    val spec = PBEKeySpec(pin.toCharArray(), salt, PIN_ITERATIONS, PIN_KEY_LEN_BITS)
+private fun pbkdf2Hash(pin: String, salt: ByteArray, iterations: Int = PIN_ITERATIONS): ByteArray {
+    val spec = PBEKeySpec(pin.toCharArray(), salt, iterations, PIN_KEY_LEN_BITS)
     return SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
 }
 
 fun setParentalPin(prefs: SharedPreferences, pin: String) {
     val clean = pin.trim().ifEmpty { "0000" }
     val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
-    val hash = pbkdf2Hash(clean, salt)
-    val encoded = "pbkdf2:" +
+    val hash = pbkdf2Hash(clean, salt, PIN_ITERATIONS)
+    val encoded = "pbkdf2:$PIN_ITERATIONS:" +
         Base64.encodeToString(salt, Base64.NO_WRAP) + ":" +
         Base64.encodeToString(hash, Base64.NO_WRAP)
     prefs.edit()
         .putString(PIN_HASH_KEY, encoded)
         .remove(LEGACY_PIN_KEY)
+        .putInt(PIN_FAILS_KEY, 0)
+        .putLong(PIN_LOCK_UNTIL_KEY, 0L)
         .apply()
 }
 
@@ -190,25 +206,58 @@ fun hasCustomParentalPin(prefs: SharedPreferences): Boolean {
     return hasHash || (!legacy.isNullOrBlank() && legacy != "0000")
 }
 
+fun getPinLockoutSecondsLeft(prefs: SharedPreferences): Long {
+    val now = System.currentTimeMillis()
+    val until = prefs.getLong(PIN_LOCK_UNTIL_KEY, 0L).coerceAtMost(now + 120_000L)
+    return ((until - now) / 1000L).coerceAtLeast(0L)
+}
+
+fun recordPinFailedAttempt(prefs: SharedPreferences): Long {
+    val fails = prefs.getInt(PIN_FAILS_KEY, 0) + 1
+    val lockSec = when {
+        fails >= 10 -> 60L
+        fails >= 5 -> 20L
+        else -> 0L
+    }
+    val until = if (lockSec > 0L) System.currentTimeMillis() + lockSec * 1000L else 0L
+    prefs.edit()
+        .putInt(PIN_FAILS_KEY, fails)
+        .putLong(PIN_LOCK_UNTIL_KEY, until)
+        .apply()
+    return lockSec
+}
+
+fun resetPinFailedAttempts(prefs: SharedPreferences) {
+    prefs.edit().putInt(PIN_FAILS_KEY, 0).putLong(PIN_LOCK_UNTIL_KEY, 0L).apply()
+}
+
 fun verifyParentalPin(prefs: SharedPreferences, inputPin: String): Boolean {
     val cleanInput = inputPin.trim()
     val storedHash = prefs.getString(PIN_HASH_KEY, null)
     if (!storedHash.isNullOrBlank() && storedHash.startsWith("pbkdf2:")) {
         val parts = storedHash.split(":")
-        if (parts.size == 3) {
+        if (parts.size == 4) {
+            val iters = parts[1].toIntOrNull()?.coerceIn(10_000, 300_000) ?: PIN_ITERATIONS
             return runCatching {
-                val salt = Base64.decode(parts[1], Base64.NO_WRAP)
-                val expected = Base64.decode(parts[2], Base64.NO_WRAP)
-                val actual = pbkdf2Hash(cleanInput, salt)
+                val salt = Base64.decode(parts[2], Base64.NO_WRAP)
+                val expected = Base64.decode(parts[3], Base64.NO_WRAP)
+                val actual = pbkdf2Hash(cleanInput, salt, iters)
                 MessageDigest.isEqual(expected, actual)
             }.getOrDefault(false)
+        } else if (parts.size == 3) {
+            val okLegacyIter = runCatching {
+                val salt = Base64.decode(parts[1], Base64.NO_WRAP)
+                val expected = Base64.decode(parts[2], Base64.NO_WRAP)
+                val actual = pbkdf2Hash(cleanInput, salt, 10_000)
+                MessageDigest.isEqual(expected, actual)
+            }.getOrDefault(false)
+            if (okLegacyIter) setParentalPin(prefs, cleanInput)
+            return okLegacyIter
         }
     }
     val legacyPin = prefs.getString(LEGACY_PIN_KEY, "0000") ?: "0000"
     val ok = cleanInput == legacyPin
-    if (ok) {
-        setParentalPin(prefs, legacyPin)
-    }
+    if (ok) setParentalPin(prefs, legacyPin)
     return ok
 }
 
@@ -434,6 +483,8 @@ fun maskSensitiveKeys(text: String): String {
         .replace(Regex("\"(key|token|password|pass|pwd|secret|mac)\"\\s*:\\s*\"[^\"]*\"", RegexOption.IGNORE_CASE), "\"$1\":\"***HIDDEN***\"")
         .replace(Regex("([?&](?:username|user|login|password|pass|pwd|token|auth|key|apikey|api_key|secret|mac|hash|sig)=)([^&\\s\"']+)", RegexOption.IGNORE_CASE), "$1***HIDDEN***")
         .replace(Regex("(https?://)([^/:\\s@]+):([^@\\s/]+)@", RegexOption.IGNORE_CASE), "$1***:***@")
+        .replace(Regex("(https?://[^/\\s]+(?:/live|/movie|/series)?/)([^/\\s]+)/([^/\\s]+)/(\\d+(?:\\.[a-zA-Z0-9]+)?)", RegexOption.IGNORE_CASE), "$1***/***/$4")
+        .replace(Regex("(?i)(Authorization|Cookie)\\s*:\\s*[^\\r\\n]+"), "$1: ***HIDDEN***")
         .replace(Regex("\\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\\b"), "XX:XX:XX:***:***:***")
 }
 
@@ -473,20 +524,29 @@ fun saveVodProgressItem(prefs: SharedPreferences, item: VodProgressItem): List<V
 }
 
 fun loadNamedList(prefs: SharedPreferences, jsonKey: String, legacySingleKey: String, defaultName: String): List<NamedSource> {
-    val raw = prefs.getString(jsonKey, null)
-    if (!raw.isNullOrBlank()) {
+    if (prefs.contains(jsonKey)) {
+        val raw = prefs.getString(jsonKey, "[]") ?: "[]"
         val list = mutableListOf<NamedSource>()
         runCatching {
             val arr = JSONArray(raw)
             for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                list.add(NamedSource(o.optString("id"), o.optString("name"), o.optString("url")))
+                val o = arr.optJSONObject(i) ?: continue
+                val url = o.optString("url").trim()
+                if (url.isNotEmpty()) {
+                    list.add(NamedSource(o.optString("id").ifBlank { "src_$i" }, o.optString("name").ifBlank { defaultName }, url))
+                }
             }
         }
-        if (list.isNotEmpty()) return list
+        return list
     }
-    val legacy = prefs.getString(legacySingleKey, "") ?: ""
-    return if (legacy.isNotBlank()) listOf(NamedSource("legacy_1", defaultName, legacy)) else emptyList()
+    val legacy = prefs.getString(legacySingleKey, "")?.trim() ?: ""
+    if (legacy.isNotBlank()) {
+        val migrated = listOf(NamedSource("legacy_1", defaultName, legacy))
+        saveNamedList(prefs, jsonKey, migrated)
+        prefs.edit().remove(legacySingleKey).apply()
+        return migrated
+    }
+    return emptyList()
 }
 
 fun saveNamedList(prefs: SharedPreferences, jsonKey: String, list: List<NamedSource>) {
@@ -529,40 +589,66 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     return root.toString(2)
 }
 
+private fun sanitizeNamedSourcesJson(rawJson: String): String {
+    val clean = JSONArray()
+    runCatching {
+        val arr = JSONArray(rawJson)
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val url = o.optString("url").trim()
+            if (url.startsWith("http://", true) || url.startsWith("https://", true) || url.startsWith("content://", true)) {
+                clean.put(
+                    JSONObject().apply {
+                        put("id", o.optString("id").ifBlank { "imp_$i" })
+                        put("name", o.optString("name").ifBlank { "Source ${i + 1}" })
+                        put("url", url)
+                    }
+                )
+            }
+        }
+    }
+    return clean.toString()
+}
+
 fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolean = runCatching {
     val root = JSONObject(jsonStr.trim())
     val favSet = mutableSetOf<String>()
-    root.optJSONArray("favs")?.let { arr -> for (i in 0 until arr.length()) favSet.add(arr.getString(i)) }
+    root.optJSONArray("favs")?.let { arr -> for (i in 0 until arr.length()) favSet.add(arr.optString(i)) }
     val hidSet = mutableSetOf<String>()
-    root.optJSONArray("hidden_groups")?.let { arr -> for (i in 0 until arr.length()) hidSet.add(arr.getString(i)) }
+    root.optJSONArray("hidden_groups")?.let { arr -> for (i in 0 until arr.length()) hidSet.add(arr.optString(i)) }
     val lockSet = mutableSetOf<String>()
-    root.optJSONArray("locked_groups")?.let { arr -> for (i in 0 until arr.length()) lockSet.add(arr.getString(i)) }
+    root.optJSONArray("locked_groups")?.let { arr -> for (i in 0 until arr.length()) lockSet.add(arr.optString(i)) }
+
+    val lang = if (root.optString("lang", "ru") == "en") "en" else "ru"
+    val devType = if (root.optString("device_type", "mobile") == "tv") "tv" else "mobile"
+    val ctrlMode = if (root.optString("control_mode", "touch") in listOf("dpad", "remote")) root.optString("control_mode") else "touch"
+
     prefs.edit()
         .putBoolean("lang_selected", true)
-        .putString("lang", root.optString("lang", "ru"))
-        .putString("device_type", root.optString("device_type", "mobile"))
-        .putString("control_mode", root.optString("control_mode", "touch"))
-        .putInt("clock_pos", root.optInt("clock_pos", 0))
-        .putInt("player_engine", root.optInt("player_engine", 0))
-        .putInt("archive_days", root.optInt("archive_days", 3))
-        .putInt("epg_offset_hours", root.optInt("epg_offset_hours", 0))
+        .putString("lang", lang)
+        .putString("device_type", devType)
+        .putString("control_mode", ctrlMode)
+        .putInt("clock_pos", root.optInt("clock_pos", 0).coerceIn(0, 2))
+        .putInt("player_engine", root.optInt("player_engine", 0).coerceIn(0, 2))
+        .putInt("archive_days", root.optInt("archive_days", 3).coerceIn(1, 5))
+        .putInt("epg_offset_hours", root.optInt("epg_offset_hours", 0).coerceIn(-12, 12))
         .putBoolean("parental_enabled", root.optBoolean("parental_enabled", false))
-        .putString("theme_id", root.optString("theme_id", AppThemePalette.DARK_EMERALD.id))
-        .putString("playlists_json", root.optString("playlists_json", "[]"))
+        .putString("theme_id", AppThemePalette.fromId(root.optString("theme_id")).id)
+        .putString("playlists_json", sanitizeNamedSourcesJson(root.optString("playlists_json", "[]")))
         .putString("selected_playlist_id", root.optString("selected_playlist_id", ""))
-        .putString("epgs_json", root.optString("epgs_json", "[]"))
+        .putString("epgs_json", sanitizeNamedSourcesJson(root.optString("epgs_json", "[]")))
         .putString("selected_epg_id", root.optString("selected_epg_id", "AUTO_PLAYLIST"))
         .putBoolean("use_playlist_epg", root.optBoolean("use_playlist_epg", true))
-        .putString("vportal_url", root.optString("vportal_url", ""))
-        .putString("stalker_url", root.optString("stalker_url", ""))
-        .putString("stalker_mac", root.optString("stalker_mac", ""))
-        .putInt("player_resize", root.optInt("player_resize", 0))
-        .putInt("player_buffer", root.optInt("player_buffer", 1))
-        .putString("player_ua", root.optString("player_ua", "Lavf/60.3.100"))
+        .putString("vportal_url", root.optString("vportal_url", "").trim())
+        .putString("stalker_url", root.optString("stalker_url", "").trim())
+        .putString("stalker_mac", root.optString("stalker_mac", "").trim())
+        .putInt("player_resize", root.optInt("player_resize", 0).coerceIn(0, 2))
+        .putInt("player_buffer", root.optInt("player_buffer", 1).coerceIn(0, 2))
+        .putString("player_ua", root.optString("player_ua", "Lavf/60.3.100").ifBlank { "Lavf/60.3.100" })
         .putBoolean("player_auto_fs", root.optBoolean("player_auto_fs", false))
-        .putStringSet("favs", favSet)
-        .putStringSet("hidden_groups", hidSet)
-        .putStringSet("locked_groups", lockSet)
+        .putStringSet("favs", favSet.filter { it.isNotBlank() }.toSet())
+        .putStringSet("hidden_groups", hidSet.filter { it.isNotBlank() }.toSet())
+        .putStringSet("locked_groups", lockSet.filter { it.isNotBlank() }.toSet())
         .apply()
     val legacyPin = root.optString("parental_pin", "").trim()
     if (legacyPin.isNotEmpty()) {
