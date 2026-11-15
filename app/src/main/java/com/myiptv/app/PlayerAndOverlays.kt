@@ -17,6 +17,7 @@ import android.widget.VideoView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -67,12 +68,22 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.net.URI
+import java.util.Locale
 import kotlin.math.roundToInt
 
 data class AudioTrackOption(
     val groupIndex: Int,
     val trackIndex: Int,
     val label: String,
+    val isSelected: Boolean
+)
+
+data class VideoQualityOption(
+    val groupIndex: Int,
+    val trackIndex: Int,
+    val label: String,
+    val height: Int,
+    val bitrate: Int,
     val isSelected: Boolean
 )
 
@@ -111,7 +122,11 @@ fun SmartVideoPlayer(
     cookie: String? = null,
     isRu: Boolean = true,
     isPipMode: Boolean = false,
-    onNextChannel: (() -> Unit)? = null
+    onNextChannel: (() -> Unit)? = null,
+    showQualitySelectorDialog: Boolean = false,
+    onDismissQualitySelector: () -> Unit = {},
+    enableDoubleTapSeek: Boolean = false,
+    onDoubleTapSeekDelta: ((Long) -> Unit)? = null
 ) {
     if (playerEngine == 1) {
         NativeAndroidVideoPlayer(
@@ -146,7 +161,11 @@ fun SmartVideoPlayer(
             cookie = cookie,
             isRu = isRu,
             isPipMode = isPipMode,
-            onNextChannel = onNextChannel
+            onNextChannel = onNextChannel,
+            showQualitySelectorDialog = showQualitySelectorDialog,
+            onDismissQualitySelector = onDismissQualitySelector,
+            enableDoubleTapSeek = enableDoubleTapSeek && !isPipMode,
+            onDoubleTapSeekDelta = onDoubleTapSeekDelta
         )
     }
 }
@@ -273,7 +292,11 @@ fun ExoVideoPlayer(
     cookie: String? = null,
     isRu: Boolean = true,
     isPipMode: Boolean = false,
-    onNextChannel: (() -> Unit)? = null
+    onNextChannel: (() -> Unit)? = null,
+    showQualitySelectorDialog: Boolean = false,
+    onDismissQualitySelector: () -> Unit = {},
+    enableDoubleTapSeek: Boolean = false,
+    onDoubleTapSeekDelta: ((Long) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -282,7 +305,11 @@ fun ExoVideoPlayer(
     var retryAttempt by remember(streamUrl) { mutableIntStateOf(0) }
     var manualRetryTrigger by remember { mutableIntStateOf(0) }
     var gestureHudText by remember { mutableStateOf("") }
+    var doubleTapHudText by remember { mutableStateOf("") }
+    var doubleTapHudCounter by remember { mutableIntStateOf(0) }
     var audioTracks by remember { mutableStateOf<List<AudioTrackOption>>(emptyList()) }
+    var videoQualities by remember(streamUrl) { mutableStateOf<List<VideoQualityOption>>(emptyList()) }
+    var isAutoQuality by remember(streamUrl) { mutableStateOf(true) }
     var didInitialSeek by remember(streamUrl, initialSeekMs) { mutableStateOf(false) }
     var pendingReconnectSeekMs by remember(streamUrl) { mutableLongStateOf(0L) }
     var detectedRes by remember(streamUrl) { mutableStateOf("") }
@@ -292,6 +319,7 @@ fun ExoVideoPlayer(
 
     val curOnQuality by rememberUpdatedState(onVideoQualityDetected)
     val curOnProgress by rememberUpdatedState(onPlaybackProgress)
+    val curOnDoubleTapSeek by rememberUpdatedState(onDoubleTapSeekDelta)
     val scope = rememberCoroutineScope()
 
     val mediaAudioAttributes = remember {
@@ -319,6 +347,13 @@ fun ExoVideoPlayer(
                 setHandleAudioBecomingNoisy(true)
                 playWhenReady = true
             }
+    }
+
+    LaunchedEffect(doubleTapHudCounter) {
+        if (doubleTapHudText.isNotEmpty()) {
+            delay(900L)
+            doubleTapHudText = ""
+        }
     }
 
     DisposableEffect(enableSwipeGestures, context) {
@@ -374,6 +409,11 @@ fun ExoVideoPlayer(
         isReconnecting = false
         fatalErrorMsg = null
         retryAttempt = 0
+        isAutoQuality = true
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+            .buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+            .build()
         curOnQuality("")
         val realUrl = NetworkLoader.resolveStalkerStreamIfNeeded(streamUrl)
         if (realUrl.isBlank()) {
@@ -471,26 +511,50 @@ fun ExoVideoPlayer(
             }
 
             override fun onTracksChanged(tracks: Tracks) {
-                val list = mutableListOf<AudioTrackOption>()
+                val aList = mutableListOf<AudioTrackOption>()
+                val vList = mutableListOf<VideoQualityOption>()
+                val hasVideoOverride = exoPlayer.trackSelectionParameters.overrides.values.any { it.type == C.TRACK_TYPE_VIDEO }
+                isAutoQuality = !hasVideoOverride
+
                 tracks.groups.forEachIndexed { gIdx, group ->
                     if (group.type == C.TRACK_TYPE_AUDIO) {
                         for (tIdx in 0 until group.length) {
                             val fmt = group.getTrackFormat(tIdx)
-                            val fallbackLabel = if (isRu) "Дорожка #${list.size + 1}" else "Track #${list.size + 1}"
+                            val fallbackLabel = if (isRu) "Дорожка #${aList.size + 1}" else "Track #${aList.size + 1}"
                             val title = listOf(fmt.label ?: "", fmt.language?.uppercase() ?: "", if (fmt.channelCount > 0) "${fmt.channelCount}ch" else "")
                                 .filter { it.isNotBlank() }.joinToString(" • ").ifEmpty { fallbackLabel }
-                            list.add(AudioTrackOption(gIdx, tIdx, title, group.isTrackSelected(tIdx)))
+                            aList.add(AudioTrackOption(gIdx, tIdx, title, group.isTrackSelected(tIdx)))
                         }
-                    } else if (group.type == C.TRACK_TYPE_VIDEO && group.length > 0) {
-                        val fps = group.getTrackFormat(0).frameRate
-                        if (fps > 1f) {
-                            detectedFps = "${fps.roundToInt()}fps"
-                            val combined = listOf(detectedRes, detectedFps).filter { it.isNotBlank() }.joinToString(" • ")
-                            if (combined.isNotBlank()) curOnQuality(combined)
+                    } else if (group.type == C.TRACK_TYPE_VIDEO) {
+                        for (tIdx in 0 until group.length) {
+                            if (!group.isTrackSupported(tIdx)) continue
+                            val fmt = group.getTrackFormat(tIdx)
+                            val h = fmt.height
+                            if (h > 0) {
+                                val resTag = when {
+                                    h >= 2100 -> "4K (${h}p)"
+                                    else -> "${h}p"
+                                }
+                                val fpsTag = if (fmt.frameRate > 1f) "${fmt.frameRate.roundToInt()}fps" else ""
+                                val brTag = if (fmt.bitrate > 0) String.format(Locale.US, "%.1f Mbps", fmt.bitrate / 1_000_000f) else ""
+                                val lbl = listOf(resTag, fpsTag, brTag).filter { it.isNotBlank() }.joinToString(" • ")
+                                vList.add(VideoQualityOption(gIdx, tIdx, lbl, h, fmt.bitrate, hasVideoOverride && group.isTrackSelected(tIdx)))
+                            }
+                        }
+                        if (group.length > 0) {
+                            val fps = group.getTrackFormat(0).frameRate
+                            if (fps > 1f) {
+                                detectedFps = "${fps.roundToInt()}fps"
+                                val combined = listOf(detectedRes, detectedFps).filter { it.isNotBlank() }.joinToString(" • ")
+                                if (combined.isNotBlank()) curOnQuality(combined)
+                            }
                         }
                     }
                 }
-                audioTracks = list
+                audioTracks = aList
+                videoQualities = vList
+                    .distinctBy { it.label }
+                    .sortedWith(compareByDescending<VideoQualityOption> { it.height }.thenByDescending { it.bitrate })
             }
         }
         exoPlayer.addListener(listener)
@@ -536,6 +600,65 @@ fun ExoVideoPlayer(
         }
     }
 
+    if (showQualitySelectorDialog) {
+        Dialog(onDismissRequest = onDismissQualitySelector) {
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1C2026)), shape = RoundedCornerShape(16.dp)) {
+                Column(modifier = Modifier.padding(16.dp).widthIn(min = 260.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (isRu) "🎞 Качество видео" else "🎞 Video Quality", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp, color = Color(0xFF10B981))
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                            .background(if (isAutoQuality) Color(0xFF19322B) else Color(0xFF121417))
+                            .clickable {
+                                exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                                    .buildUpon()
+                                    .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                                    .build()
+                                isAutoQuality = true
+                                onDismissQualitySelector()
+                            }.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(if (isRu) "✨ Авто (Адаптивно)" else "✨ Auto (Adaptive)", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        if (isAutoQuality) Icon(Icons.Default.Check, null, tint = Color(0xFF10B981))
+                    }
+                    if (videoQualities.size <= 1) {
+                        val curText = videoQualities.firstOrNull()?.label ?: detectedRes.ifEmpty { if (isRu) "Фиксированный поток" else "Fixed stream" }
+                        Text(
+                            if (isRu) "Текущий поток: $curText (без адаптивных вариантов)" else "Current stream: $curText (single quality)",
+                            fontSize = 12.sp, color = Color.LightGray
+                        )
+                    } else {
+                        videoQualities.forEach { opt ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                                    .background(if (opt.isSelected) Color(0xFF19322B) else Color(0xFF121417))
+                                    .clickable {
+                                        exoPlayer.currentTracks.groups.getOrNull(opt.groupIndex)?.let { grp ->
+                                            exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters
+                                                .buildUpon()
+                                                .setOverrideForType(TrackSelectionOverride(grp.mediaTrackGroup, opt.trackIndex))
+                                                .build()
+                                            isAutoQuality = false
+                                        }
+                                        onDismissQualitySelector()
+                                    }.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(opt.label, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                if (opt.isSelected) Icon(Icons.Default.Check, null, tint = Color(0xFF10B981))
+                            }
+                        }
+                    }
+                    TextButton(onClick = onDismissQualitySelector, modifier = Modifier.align(Alignment.End)) {
+                        Text(if (isRu) "Закрыть" else "Close", color = Color.White)
+                    }
+                }
+            }
+        }
+    }
+
     val aspectConst = when (resizeMode) {
         1 -> AspectRatioFrameLayout.RESIZE_MODE_FILL
         2 -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -543,34 +666,56 @@ fun ExoVideoPlayer(
     }
 
     Box(
-        modifier = modifier.pointerInput(enableSwipeGestures, isRu) {
-            if (!enableSwipeGestures) return@pointerInput
-            detectVerticalDragGestures(
-                onDragEnd = { gestureHudText = "" },
-                onDragCancel = { gestureHudText = "" },
-                onVerticalDrag = { change, dragAmount ->
-                    val w = size.width.coerceAtLeast(1)
-                    val isLeft = change.position.x < w / 2f
-                    val delta = -dragAmount / 550f
-                    if (isLeft) {
-                        val win = (context as? Activity)?.window
-                        if (win != null) {
-                            val cur = win.attributes.screenBrightness.let { if (it < 0f) 0.5f else it }
-                            val next = (cur + delta).coerceIn(0.05f, 1.0f)
-                            val lp = win.attributes; lp.screenBrightness = next; win.attributes = lp
-                            gestureHudText = if (isRu) "☀️ Яркость: ${(next * 100).toInt()}%" else "☀️ Brightness: ${(next * 100).toInt()}%"
+        modifier = modifier
+            .pointerInput(enableSwipeGestures, isRu) {
+                if (!enableSwipeGestures) return@pointerInput
+                detectVerticalDragGestures(
+                    onDragEnd = { gestureHudText = "" },
+                    onDragCancel = { gestureHudText = "" },
+                    onVerticalDrag = { change, dragAmount ->
+                        val w = size.width.coerceAtLeast(1)
+                        val isLeft = change.position.x < w / 2f
+                        val delta = -dragAmount / 550f
+                        if (isLeft) {
+                            val win = (context as? Activity)?.window
+                            if (win != null) {
+                                val cur = win.attributes.screenBrightness.let { if (it < 0f) 0.5f else it }
+                                val next = (cur + delta).coerceIn(0.05f, 1.0f)
+                                val lp = win.attributes; lp.screenBrightness = next; win.attributes = lp
+                                gestureHudText = if (isRu) "☀️ Яркость: ${(next * 100).toInt()}%" else "☀️ Brightness: ${(next * 100).toInt()}%"
+                            }
+                        } else {
+                            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                            val maxV = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                            val curV = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+                            val nextFloat = ((curV.toFloat() / maxV.toFloat()) + delta).coerceIn(0f, 1f)
+                            am.setStreamVolume(AudioManager.STREAM_MUSIC, (nextFloat * maxV).toInt().coerceIn(0, maxV), 0)
+                            gestureHudText = if (isRu) "🔊 Громкость: ${(nextFloat * 100).toInt()}%" else "🔊 Volume: ${(nextFloat * 100).toInt()}%"
                         }
-                    } else {
-                        val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                        val maxV = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-                        val curV = am.getStreamVolume(AudioManager.STREAM_MUSIC)
-                        val nextFloat = ((curV.toFloat() / maxV.toFloat()) + delta).coerceIn(0f, 1f)
-                        am.setStreamVolume(AudioManager.STREAM_MUSIC, (nextFloat * maxV).toInt().coerceIn(0, maxV), 0)
-                        gestureHudText = if (isRu) "🔊 Громкость: ${(nextFloat * 100).toInt()}%" else "🔊 Volume: ${(nextFloat * 100).toInt()}%"
                     }
-                }
-            )
-        }
+                )
+            }
+            .pointerInput(enableDoubleTapSeek, isRu) {
+                if (!enableDoubleTapSeek) return@pointerInput
+                detectTapGestures(
+                    onDoubleTap = { offset ->
+                        val w = size.width.coerceAtLeast(1)
+                        val deltaMs = if (offset.x < w / 2f) -10_000L else 10_000L
+                        val cb = curOnDoubleTapSeek
+                        if (cb != null) {
+                            cb(deltaMs)
+                        } else {
+                            exoPlayer.seekTo((exoPlayer.currentPosition + deltaMs).coerceAtLeast(0L))
+                        }
+                        doubleTapHudText = if (deltaMs < 0L) {
+                            if (isRu) "⏪ -10 сек" else "⏪ -10 sec"
+                        } else {
+                            if (isRu) "⏩ +10 сек" else "⏩ +10 sec"
+                        }
+                        doubleTapHudCounter++
+                    }
+                )
+            }
     ) {
         AndroidView(
             factory = { ctx ->
@@ -586,9 +731,10 @@ fun ExoVideoPlayer(
             },
             modifier = Modifier.fillMaxSize()
         )
-        if (gestureHudText.isNotEmpty() && !isPipMode) {
+        val activeHud = gestureHudText.ifEmpty { doubleTapHudText }
+        if (activeHud.isNotEmpty() && !isPipMode) {
             Box(modifier = Modifier.align(Alignment.Center).background(Color(0xDD000000), RoundedCornerShape(14.dp)).padding(horizontal = 20.dp, vertical = 12.dp)) {
-                Text(gestureHudText, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                Text(activeHud, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
             }
         }
         if (isReconnecting && !isPipMode) {
