@@ -146,9 +146,11 @@ fun isAdultCategoryOrChannel(text: String): Boolean {
 fun isChannelAllowed(
     channel: Channel,
     parentalEnabled: Boolean,
-    adultUnlockedSession: Boolean
+    adultUnlockedSession: Boolean,
+    lockedGroups: Set<String> = emptySet()
 ): Boolean {
     if (!parentalEnabled || adultUnlockedSession) return true
+    if (lockedGroups.contains(channel.group)) return false
     return !isAdultCategoryOrChannel("${channel.group} ${channel.name}")
 }
 
@@ -439,6 +441,8 @@ fun maskUrlForDisplay(url: String): String = maskSensitiveKeys(url.trim())
 
 fun loadHiddenGroups(prefs: SharedPreferences): Set<String> = prefs.getStringSet("hidden_groups", emptySet())?.toSet() ?: emptySet()
 fun saveHiddenGroups(prefs: SharedPreferences, groups: Set<String>) { prefs.edit().putStringSet("hidden_groups", groups).apply() }
+fun loadLockedGroups(prefs: SharedPreferences): Set<String> = prefs.getStringSet("locked_groups", emptySet())?.toSet() ?: emptySet()
+fun saveLockedGroups(prefs: SharedPreferences, groups: Set<String>) { prefs.edit().putStringSet("locked_groups", groups).apply() }
 
 fun loadVodHistory(prefs: SharedPreferences): List<VodProgressItem> {
     val raw = prefs.getString("vod_history_json", null) ?: return emptyList()
@@ -521,6 +525,7 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     root.put("player_auto_fs", prefs.getBoolean("player_auto_fs", false))
     val favArr = JSONArray(); prefs.getStringSet("favs", emptySet())?.forEach { favArr.put(it) }; root.put("favs", favArr)
     val hidArr = JSONArray(); prefs.getStringSet("hidden_groups", emptySet())?.forEach { hidArr.put(it) }; root.put("hidden_groups", hidArr)
+    val lockArr = JSONArray(); prefs.getStringSet("locked_groups", emptySet())?.forEach { lockArr.put(it) }; root.put("locked_groups", lockArr)
     return root.toString(2)
 }
 
@@ -530,6 +535,8 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
     root.optJSONArray("favs")?.let { arr -> for (i in 0 until arr.length()) favSet.add(arr.getString(i)) }
     val hidSet = mutableSetOf<String>()
     root.optJSONArray("hidden_groups")?.let { arr -> for (i in 0 until arr.length()) hidSet.add(arr.getString(i)) }
+    val lockSet = mutableSetOf<String>()
+    root.optJSONArray("locked_groups")?.let { arr -> for (i in 0 until arr.length()) lockSet.add(arr.getString(i)) }
     prefs.edit()
         .putBoolean("lang_selected", true)
         .putString("lang", root.optString("lang", "ru"))
@@ -555,6 +562,7 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
         .putBoolean("player_auto_fs", root.optBoolean("player_auto_fs", false))
         .putStringSet("favs", favSet)
         .putStringSet("hidden_groups", hidSet)
+        .putStringSet("locked_groups", lockSet)
         .apply()
     val legacyPin = root.optString("parental_pin", "").trim()
     if (legacyPin.isNotEmpty()) {
