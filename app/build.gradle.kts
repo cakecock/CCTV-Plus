@@ -44,7 +44,6 @@ android {
 
     buildTypes {
         debug {
-            if (hasCiSigning) signingConfig = signingConfigs.getByName("releaseSign")
         }
         release {
             isMinifyEnabled = true
