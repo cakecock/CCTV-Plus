@@ -333,7 +333,9 @@ object NetworkLoader {
                                     }
                                     val pathNoQuery = t.substringBefore("?").substringBefore("#").lowercase()
                                     val isVod = pathNoQuery.endsWith(".mp4") || pathNoQuery.endsWith(".mkv") ||
-                                        pathNoQuery.endsWith(".avi") || pathNoQuery.endsWith(".mov") || pathNoQuery.endsWith(".webm")
+                                        pathNoQuery.endsWith(".avi") || pathNoQuery.endsWith(".mov") || pathNoQuery.endsWith(".webm") ||
+                                        pathNoQuery.contains("/movie/") || pathNoQuery.contains("/movies/") ||
+                                        pathNoQuery.contains("/vod/") || pathNoQuery.contains("/series/")
                                     val baseId = stableChannelId(t, resolvedName)
                                     val dupCount = (seenIds[baseId] ?: 0) + 1
                                     seenIds[baseId] = dupCount
@@ -481,10 +483,19 @@ object NetworkLoader {
                 seenVpIds[baseVpKey] = vpDup
                 val detSuffix = if (vpDup == 1) baseVpKey else "${baseVpKey}_$vpDup"
 
+                val folderCount = item.optInt("count", 0).takeIf { it > 0 }
+                    ?: item.optInt("items_count", 0).takeIf { it > 0 }
+                    ?: item.optInt("total", 0).takeIf { it > 0 }
+                    ?: item.optInt("quantity", 0).takeIf { it > 0 }
+                    ?: item.optInt("series_count", 0).takeIf { it > 0 }
+                    ?: item.optInt("episodes_count", 0).takeIf { it > 0 }
+                    ?: item.optInt("cnt", 0).takeIf { it > 0 }
+                    ?: 0
+
                 if (directStream.isNotEmpty()) {
                     out.add(VodMovie("vp_media_$detSuffix", title, "Видео", poster.ifEmpty { null }, desc, year, rating, directStream, false, mergedReq.toString(), rootUrl))
                 } else {
-                    out.add(VodMovie("vp_node_$detSuffix", title, if (itemType == "category") "Категория" else "Папка / Серия", poster.ifEmpty { null }, desc, year, rating, "", true, mergedReq.toString(), rootUrl))
+                    out.add(VodMovie("vp_node_$detSuffix", title, if (itemType == "category") "Категория" else "Папка / Серия", poster.ifEmpty { null }, desc, year, rating, "", true, mergedReq.toString(), rootUrl, itemCount = folderCount))
                 }
             }
             if (out.isEmpty()) {
