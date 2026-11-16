@@ -89,7 +89,8 @@ data class VodFolderNav(
     val title: String,
     val items: List<VodMovie>,
     val targetUrl: String? = null,
-    val requestPayloadJson: String? = null
+    val requestPayloadJson: String? = null,
+    val isSearchMode: Boolean = false
 )
 
 private const val FAV_GROUP_TAG = "__FAV_CATEGORY__"
@@ -355,6 +356,7 @@ class MainActivity : ComponentActivity() {
             var currentVodFolderTitle by remember { mutableStateOf(if (isRu) "Кинозал" else "Movies") }
             var currentVodTargetUrl by remember { mutableStateOf<String?>(null) }
             var currentVodPayloadJson by remember { mutableStateOf<String?>(null) }
+            var isVodSearchMode by remember { mutableStateOf(false) }
             var isLoadingMoreVod by remember { mutableStateOf(false) }
             var vodNoticeMessage by remember { mutableStateOf("") }
 
@@ -405,8 +407,10 @@ class MainActivity : ComponentActivity() {
             var lastVodSavedAtMs by remember { mutableStateOf(0L) }
             var epgLoadJob by remember { mutableStateOf<Job?>(null) }
             var reloadJob by remember { mutableStateOf<Job?>(null) }
+            var vodSearchJob by remember { mutableStateOf<Job?>(null) }
             var epgLoadSeq by remember { mutableIntStateOf(0) }
             var reloadSeq by remember { mutableIntStateOf(0) }
+            var vodSearchSeq by remember { mutableIntStateOf(0) }
 
             val scope = rememberCoroutineScope()
             val visibleChannels = remember(channels, hiddenGroups) { channels.filterNot { hiddenGroups.contains(it.group) } }
@@ -574,6 +578,7 @@ class MainActivity : ComponentActivity() {
                     vodFolderStack = emptyList()
                     currentVodTargetUrl = null
                     currentVodPayloadJson = null
+                    isVodSearchMode = false
                     currentVodFolderTitle = if (isRu) "Кинозал" else "Movies"
                     playlistErrorText = if (loadedChannels.isEmpty() && (activePlaylist != null || (stalkerUrl.isNotBlank() && stalkerMac.isNotBlank()))) {
                         NetworkLoader.lastM3uError ?: NetworkLoader.lastStalkerError
@@ -730,11 +735,13 @@ class MainActivity : ComponentActivity() {
                             title = currentVodFolderTitle,
                             items = vodItems,
                             targetUrl = currentVodTargetUrl,
-                            requestPayloadJson = currentVodPayloadJson
+                            requestPayloadJson = currentVodPayloadJson,
+                            isSearchMode = isVodSearchMode
                         )
                         currentVodFolderTitle = item.title
                         currentVodTargetUrl = item.targetApiUrl
                         currentVodPayloadJson = item.requestPayloadJson
+                        isVodSearchMode = false
                         vodItems = children
                     } else vodNoticeMessage = (if (isRu) "Ответ сервера: " else "Server response: ") + maskSensitiveKeys(vportalDiagnostic)
                     } finally {
@@ -1231,10 +1238,11 @@ class MainActivity : ComponentActivity() {
                                     )
                                     1 -> VodScreen(
                                         S, themePalette, vodItems, vodHistory, currentVodFolderTitle, vodFolderStack.isNotEmpty(), isLoadingMoreVod, vodNoticeMessage, maskSensitiveKeys(vportalDiagnostic),
-                                        hasVPortal = vportalUrl.isNotBlank(),
                                         parentalEnabled = parentalEnabled,
                                         adultUnlockedSession = adultUnlockedSession,
                                         lockedGroups = lockedGroups,
+                                        isSearchMode = isVodSearchMode,
+                                        isSearching = isLoading,
                                         onBackFolder = {
                                             vodNoticeMessage = ""
                                             if (vodFolderStack.isNotEmpty()) {
@@ -1243,6 +1251,7 @@ class MainActivity : ComponentActivity() {
                                                 vodItems = last.items
                                                 currentVodTargetUrl = last.targetUrl
                                                 currentVodPayloadJson = last.requestPayloadJson
+                                                isVodSearchMode = last.isSearchMode
                                                 vodFolderStack = vodFolderStack.dropLast(1)
                                             }
                                         },
@@ -1252,77 +1261,78 @@ class MainActivity : ComponentActivity() {
                                             val cleanQ = q.trim()
                                             if (cleanQ.isBlank()) {
                                                 vodNoticeMessage = if (isRu) "Введите текст для поиска" else "Enter a search query"
-                                                return@VodScreen
-                                            }
-                                            scope.launch {
-                                                isLoading = true
-                                                val searchResults = mutableListOf<VodMovie>()
+                                            } else {
+                                                val mySearchSeq = ++vodSearchSeq
+                                                vodSearchJob?.cancel()
+                                                vodSearchJob = scope.launch {
+                                                    isLoading = true
+                                                    try {
+                                                        val searchResults = mutableListOf<VodMovie>()
 
-                                                // 1. Поиск по VPortal с защитой от ложного возврата корня
-                                                if (vportalUrl.isNotBlank()) {
-                                                    val res = NetworkLoader.loadVPortalNode(
-                                                        rawPortalUrl = vportalUrl.trim(),
-                                                        searchQuery = cleanQ
-                                                    )
-                                                    // Фильтруем совпадения, чтобы отсечь серверы, тупо вернувшие весь каталог flicks
-                                                    val matchedFlicks = res.first.filter { it.title.contains(cleanQ, ignoreCase = true) }
-                                                    if (matchedFlicks.isNotEmpty()) {
-                                                        searchResults.addAll(matchedFlicks)
-                                                    } else {
-                                                        // Запасной вариант с явным cmd: "search"
-                                                        val searchPayload = JSONObject().apply {
-                                                            put("cmd", "search")
-                                                            put("query", cleanQ)
-                                                            put("search", cleanQ)
-                                                            put("limit", 100)
-                                                        }.toString()
-                                                        val resSearch = NetworkLoader.loadVPortalNode(
-                                                            rawPortalUrl = vportalUrl.trim(),
-                                                            customRequestJson = searchPayload,
-                                                            searchQuery = cleanQ
-                                                        )
-                                                        val matchedSearch = resSearch.first.filter { it.title.contains(cleanQ, ignoreCase = true) }
-                                                        searchResults.addAll(matchedSearch.ifEmpty { resSearch.first })
+                                                        if (vportalUrl.isNotBlank()) {
+                                                            val res = NetworkLoader.loadVPortalNode(
+                                                                rawPortalUrl = vportalUrl.trim(),
+                                                                searchQuery = cleanQ
+                                                            )
+                                                            val matchedFlicks = res.first.filter { it.title.contains(cleanQ, ignoreCase = true) }
+                                                            if (matchedFlicks.isNotEmpty()) {
+                                                                searchResults.addAll(matchedFlicks)
+                                                            } else {
+                                                                val searchPayload = JSONObject().apply {
+                                                                    put("cmd", "search")
+                                                                    put("query", cleanQ)
+                                                                    put("search", cleanQ)
+                                                                    put("limit", 100)
+                                                                }.toString()
+                                                                val resSearch = NetworkLoader.loadVPortalNode(
+                                                                    rawPortalUrl = vportalUrl.trim(),
+                                                                    customRequestJson = searchPayload,
+                                                                    searchQuery = cleanQ
+                                                                )
+                                                                val matchedSearch = resSearch.first.filter { it.title.contains(cleanQ, ignoreCase = true) }
+                                                                searchResults.addAll(matchedSearch)
+                                                            }
+                                                        }
+
+                                                        if (stalkerUrl.isNotBlank() && stalkerMac.isNotBlank()) {
+                                                            val stkMatches = NetworkLoader.searchStalkerVod(stalkerUrl.trim(), stalkerMac.trim(), cleanQ)
+                                                            searchResults.addAll(stkMatches.filter { it.title.contains(cleanQ, ignoreCase = true) })
+                                                        }
+
+                                                        if (allM3uMovies.isNotEmpty()) {
+                                                            val m3uMatches = allM3uMovies.filter { it.title.contains(cleanQ, ignoreCase = true) }
+                                                            searchResults.addAll(m3uMatches)
+                                                        }
+
+                                                        val memoryMatches = vodItems.filter { !it.isFolder && it.title.contains(cleanQ, ignoreCase = true) }
+                                                        searchResults.addAll(memoryMatches)
+
+                                                        val dedupedResults = searchResults.distinctBy {
+                                                            normalizeChannelKey(it.title).ifEmpty { it.title.trim().lowercase() }
+                                                        }
+
+                                                        if (dedupedResults.isNotEmpty()) {
+                                                            vodFolderStack = vodFolderStack + VodFolderNav(
+                                                                title = currentVodFolderTitle,
+                                                                items = vodItems,
+                                                                targetUrl = currentVodTargetUrl,
+                                                                requestPayloadJson = currentVodPayloadJson,
+                                                                isSearchMode = isVodSearchMode
+                                                            )
+                                                            currentVodFolderTitle = if (isRu) "🔍 Поиск: $cleanQ" else "🔍 Search: $cleanQ"
+                                                            currentVodTargetUrl = null
+                                                            currentVodPayloadJson = null
+                                                            isVodSearchMode = true
+                                                            vodItems = dedupedResults
+                                                            vodNoticeMessage = ""
+                                                        } else {
+                                                            vodNoticeMessage = if (isRu) "По запросу «$cleanQ» ничего не найдено" else "No results found for '$cleanQ'"
+                                                        }
+                                                    } finally {
+                                                        if (vodSearchSeq == mySearchSeq) {
+                                                            isLoading = false
+                                                        }
                                                     }
-                                                }
-
-                                                // 2. Серверный поиск по Stalker VOD
-                                                if (stalkerUrl.isNotBlank() && stalkerMac.isNotBlank()) {
-                                                    val stkMatches = NetworkLoader.searchStalkerVod(stalkerUrl.trim(), stalkerMac.trim(), cleanQ)
-                                                    searchResults.addAll(stkMatches.filter { it.title.contains(cleanQ, ignoreCase = true) })
-                                                }
-
-                                                // 3. Сквозной поиск по всей базе M3U
-                                                if (allM3uMovies.isNotEmpty()) {
-                                                    val m3uMatches = allM3uMovies.filter { it.title.contains(cleanQ, ignoreCase = true) }
-                                                    searchResults.addAll(m3uMatches)
-                                                }
-
-                                                // 4. Поиск среди уже подгруженных фильмов в памяти
-                                                val memoryMatches = vodItems.filter { !it.isFolder && it.title.contains(cleanQ, ignoreCase = true) }
-                                                searchResults.addAll(memoryMatches)
-
-                                                isLoading = false
-
-                                                // Дедупликация результатов по нормализованному названию
-                                                val dedupedResults = searchResults.distinctBy {
-                                                    normalizeChannelKey(it.title).ifEmpty { it.title.trim().lowercase() }
-                                                }
-
-                                                if (dedupedResults.isNotEmpty()) {
-                                                    vodFolderStack = vodFolderStack + VodFolderNav(
-                                                        title = currentVodFolderTitle,
-                                                        items = vodItems,
-                                                        targetUrl = currentVodTargetUrl,
-                                                        requestPayloadJson = currentVodPayloadJson
-                                                    )
-                                                    currentVodFolderTitle = if (isRu) "🔍 Поиск: $cleanQ" else "🔍 Search: $cleanQ"
-                                                    currentVodTargetUrl = null
-                                                    currentVodPayloadJson = null
-                                                    vodItems = dedupedResults
-                                                    vodNoticeMessage = ""
-                                                } else {
-                                                    vodNoticeMessage = if (isRu) "По запросу «$cleanQ» ничего не найдено" else "No results found for '$cleanQ'"
                                                 }
                                             }
                                         },
@@ -1672,15 +1682,15 @@ fun LiveTvScreen(
 fun VodScreen(
     S: Strings, theme: AppThemePalette, movies: List<VodMovie>, vodHistory: List<VodProgressItem>,
     folderTitle: String, canGoBack: Boolean, isLoadingMore: Boolean, noticeMessage: String, diagnosticLog: String,
-    hasVPortal: Boolean = false,
     parentalEnabled: Boolean = false,
     adultUnlockedSession: Boolean = false,
     lockedGroups: Set<String> = emptySet(),
+    isSearchMode: Boolean = false,
+    isSearching: Boolean = false,
     onBackFolder: () -> Unit, onClickItem: (VodMovie) -> Unit, onClickHistoryItem: (VodProgressItem) -> Unit,
     onAutoLoadMore: (VodMovie) -> Unit, onServerSearch: (String) -> Unit, onOpenSettings: () -> Unit
 ) {
-    // При переходе в другую папку или в результаты поиска поле ввода плавно сбрасывается
-    var searchQuery by remember(folderTitle) { mutableStateOf("") }
+    var searchQuery by remember(folderTitle, isSearchMode) { mutableStateOf("") }
     if (canGoBack) BackHandler { onBackFolder() }
     val safeMovies = remember(movies, parentalEnabled, adultUnlockedSession, lockedGroups) {
         movies.filter { isVodAllowed(it.title, it.category, parentalEnabled, adultUnlockedSession, lockedGroups) }
@@ -1688,12 +1698,10 @@ fun VodScreen(
     val safeHistory = remember(vodHistory, parentalEnabled, adultUnlockedSession) {
         vodHistory.filter { isVodAllowed(it.title, "", parentalEnabled, adultUnlockedSession) }
     }
-    val isSearchResultsView = folderTitle.startsWith("🔍")
 
-    // Ограничитель автосканирования: максимум 8 страниц (~400 фильмов) на запрос
     var autoScanPagesCount by remember(searchQuery) { mutableIntStateOf(0) }
-    LaunchedEffect(searchQuery, movies.size, isLoadingMore) {
-        if (searchQuery.isNotBlank() && !isLoadingMore && !isSearchResultsView && autoScanPagesCount < 8) {
+    LaunchedEffect(searchQuery, movies.size, isLoadingMore, isSearchMode) {
+        if (searchQuery.isNotBlank() && !isLoadingMore && !isSearchMode && autoScanPagesCount < 8) {
             val nextItem = movies.find { it.id.startsWith("vp_next_") }
             if (nextItem != null) {
                 delay(200L)
@@ -1703,8 +1711,8 @@ fun VodScreen(
         }
     }
 
-    val filtered = remember(safeMovies, searchQuery, isSearchResultsView) {
-        if (searchQuery.isBlank() || isSearchResultsView) safeMovies
+    val filtered = remember(safeMovies, searchQuery) {
+        if (searchQuery.isBlank()) safeMovies
         else safeMovies.filter { it.title.contains(searchQuery, ignoreCase = true) }
     }
 
@@ -1735,7 +1743,7 @@ fun VodScreen(
                 leadingIcon = { Icon(Icons.Default.Search, null, tint = theme.primary) },
                 trailingIcon = {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 6.dp)) {
-                        if (isLoadingMore && searchQuery.isNotBlank() && !isSearchResultsView) {
+                        if (isLoadingMore && searchQuery.isNotBlank() && !isSearchMode) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
                                 strokeWidth = 2.dp,
@@ -1752,12 +1760,12 @@ fun VodScreen(
                 },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { if (searchQuery.isNotBlank()) onServerSearch(searchQuery) }),
+                keyboardActions = KeyboardActions(onSearch = { if (searchQuery.isNotBlank() && !isSearching) onServerSearch(searchQuery) }),
                 modifier = Modifier.weight(1f).height(52.dp)
             )
             Button(
                 onClick = { onServerSearch(searchQuery) },
-                enabled = searchQuery.isNotBlank(),
+                enabled = searchQuery.isNotBlank() && !isSearching,
                 modifier = Modifier.height(52.dp)
             ) {
                 Text(if (S.isRu) "Найти" else "Find")
