@@ -1107,6 +1107,12 @@ class MainActivity : ComponentActivity() {
                                             }
                                         }
                                     },
+                                    onSingleTap = if (!isVod && !isInPipModeState) {
+                                        {
+                                            showFsControls = !showFsControls
+                                            fsInteractionTick++
+                                        }
+                                    } else null,
                                     modifier = Modifier.fillMaxSize()
                                 )
 
@@ -1232,6 +1238,7 @@ class MainActivity : ComponentActivity() {
                                             onPlayArchive = { ch, prog ->
                                                 runWithPinCheck(ch) {
                                                     currentChannel = ch; activeArchiveProgram = prog; archiveSeekOffsetSec = 0L
+                                                    showFsControls = true; fsInteractionTick++
                                                 }
                                             },
                                             onToggleReminder = { ch, prog -> toggleReminderFor(ch, prog) },
