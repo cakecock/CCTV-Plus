@@ -131,7 +131,8 @@ fun SmartVideoPlayer(
     onDismissQualitySelector: () -> Unit = {},
     enableDoubleTapSeek: Boolean = false,
     onDoubleTapSeekDelta: ((Long) -> Unit)? = null,
-    onPlaybackStopped: ((posMs: Long, durMs: Long) -> Unit)? = null
+    onPlaybackStopped: ((posMs: Long, durMs: Long) -> Unit)? = null,
+    onSingleTap: (() -> Unit)? = null
 ) {
     if (playerEngine == 1) {
         NativeAndroidVideoPlayer(
@@ -176,7 +177,8 @@ fun SmartVideoPlayer(
             onDismissQualitySelector = onDismissQualitySelector,
             enableDoubleTapSeek = enableDoubleTapSeek && !isPipMode,
             onDoubleTapSeekDelta = onDoubleTapSeekDelta,
-            onPlaybackStopped = onPlaybackStopped
+            onPlaybackStopped = onPlaybackStopped,
+            onSingleTap = onSingleTap
         )
     }
 }
@@ -385,7 +387,8 @@ fun ExoVideoPlayer(
     onDismissQualitySelector: () -> Unit = {},
     enableDoubleTapSeek: Boolean = false,
     onDoubleTapSeekDelta: ((Long) -> Unit)? = null,
-    onPlaybackStopped: ((posMs: Long, durMs: Long) -> Unit)? = null
+    onPlaybackStopped: ((posMs: Long, durMs: Long) -> Unit)? = null,
+    onSingleTap: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -410,6 +413,7 @@ fun ExoVideoPlayer(
     val curOnProgress by rememberUpdatedState(onPlaybackProgress)
     val curOnDoubleTapSeek by rememberUpdatedState(onDoubleTapSeekDelta)
     val curOnStopped by rememberUpdatedState(onPlaybackStopped)
+    val curOnSingleTap by rememberUpdatedState(onSingleTap)
     val curInitialSeekMs by rememberUpdatedState(initialSeekMs)
     val scope = rememberCoroutineScope()
 
@@ -794,6 +798,7 @@ fun ExoVideoPlayer(
             .pointerInput(enableDoubleTapSeek, isRu) {
                 if (!enableDoubleTapSeek) return@pointerInput
                 detectTapGestures(
+                    onTap = { curOnSingleTap?.invoke() },
                     onDoubleTap = { offset ->
                         val w = size.width.coerceAtLeast(1)
                         val deltaMs = if (offset.x < w / 2f) -10_000L else 10_000L
