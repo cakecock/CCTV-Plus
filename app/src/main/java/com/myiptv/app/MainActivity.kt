@@ -1250,19 +1250,26 @@ class MainActivity : ComponentActivity() {
                                         onAutoLoadMore = { openVodNode(it) },
                                         onServerSearch = { q ->
                                             val cleanQ = q.trim()
-                                            if (cleanQ.isNotBlank()) scope.launch {
+                                            if (cleanQ.isBlank()) {
+                                                vodNoticeMessage = if (isRu) "Введите текст для поиска" else "Enter a search query"
+                                                return@VodScreen
+                                            }
+                                            scope.launch {
                                                 isLoading = true
                                                 val searchResults = mutableListOf<VodMovie>()
 
-                                                // 1. Поиск по VPortal (запрос корня с flicks и search)
+                                                // 1. Поиск по VPortal с защитой от ложного возврата корня
                                                 if (vportalUrl.isNotBlank()) {
                                                     val res = NetworkLoader.loadVPortalNode(
                                                         rawPortalUrl = vportalUrl.trim(),
                                                         searchQuery = cleanQ
                                                     )
-                                                    searchResults.addAll(res.first)
-
-                                                    if (searchResults.isEmpty()) {
+                                                    // Фильтруем совпадения, чтобы отсечь серверы, тупо вернувшие весь каталог flicks
+                                                    val matchedFlicks = res.first.filter { it.title.contains(cleanQ, ignoreCase = true) }
+                                                    if (matchedFlicks.isNotEmpty()) {
+                                                        searchResults.addAll(matchedFlicks)
+                                                    } else {
+                                                        // Запасной вариант с явным cmd: "search"
                                                         val searchPayload = JSONObject().apply {
                                                             put("cmd", "search")
                                                             put("query", cleanQ)
@@ -1274,14 +1281,15 @@ class MainActivity : ComponentActivity() {
                                                             customRequestJson = searchPayload,
                                                             searchQuery = cleanQ
                                                         )
-                                                        searchResults.addAll(resSearch.first)
+                                                        val matchedSearch = resSearch.first.filter { it.title.contains(cleanQ, ignoreCase = true) }
+                                                        searchResults.addAll(matchedSearch.ifEmpty { resSearch.first })
                                                     }
                                                 }
 
                                                 // 2. Серверный поиск по Stalker VOD
                                                 if (stalkerUrl.isNotBlank() && stalkerMac.isNotBlank()) {
                                                     val stkMatches = NetworkLoader.searchStalkerVod(stalkerUrl.trim(), stalkerMac.trim(), cleanQ)
-                                                    searchResults.addAll(stkMatches)
+                                                    searchResults.addAll(stkMatches.filter { it.title.contains(cleanQ, ignoreCase = true) })
                                                 }
 
                                                 // 3. Сквозной поиск по всей базе M3U
@@ -1290,13 +1298,18 @@ class MainActivity : ComponentActivity() {
                                                     searchResults.addAll(m3uMatches)
                                                 }
 
-                                                // 4. Поиск среди всех уже подгруженных фильмов в памяти
+                                                // 4. Поиск среди уже подгруженных фильмов в памяти
                                                 val memoryMatches = vodItems.filter { !it.isFolder && it.title.contains(cleanQ, ignoreCase = true) }
                                                 searchResults.addAll(memoryMatches)
 
                                                 isLoading = false
 
-                                                if (searchResults.isNotEmpty()) {
+                                                // Дедупликация результатов по нормализованному названию
+                                                val dedupedResults = searchResults.distinctBy {
+                                                    normalizeChannelKey(it.title).ifEmpty { it.title.trim().lowercase() }
+                                                }
+
+                                                if (dedupedResults.isNotEmpty()) {
                                                     vodFolderStack = vodFolderStack + VodFolderNav(
                                                         title = currentVodFolderTitle,
                                                         items = vodItems,
@@ -1306,7 +1319,7 @@ class MainActivity : ComponentActivity() {
                                                     currentVodFolderTitle = if (isRu) "🔍 Поиск: $cleanQ" else "🔍 Search: $cleanQ"
                                                     currentVodTargetUrl = null
                                                     currentVodPayloadJson = null
-                                                    vodItems = searchResults.distinctBy { it.id }
+                                                    vodItems = dedupedResults
                                                     vodNoticeMessage = ""
                                                 } else {
                                                     vodNoticeMessage = if (isRu) "По запросу «$cleanQ» ничего не найдено" else "No results found for '$cleanQ'"
@@ -1666,7 +1679,8 @@ fun VodScreen(
     onBackFolder: () -> Unit, onClickItem: (VodMovie) -> Unit, onClickHistoryItem: (VodProgressItem) -> Unit,
     onAutoLoadMore: (VodMovie) -> Unit, onServerSearch: (String) -> Unit, onOpenSettings: () -> Unit
 ) {
-    var searchQuery by remember { mutableStateOf("") }
+    // При переходе в другую папку или в результаты поиска поле ввода плавно сбрасывается
+    var searchQuery by remember(folderTitle) { mutableStateOf("") }
     if (canGoBack) BackHandler { onBackFolder() }
     val safeMovies = remember(movies, parentalEnabled, adultUnlockedSession, lockedGroups) {
         movies.filter { isVodAllowed(it.title, it.category, parentalEnabled, adultUnlockedSession, lockedGroups) }
@@ -1676,12 +1690,14 @@ fun VodScreen(
     }
     val isSearchResultsView = folderTitle.startsWith("🔍")
 
-    // Сканер папки: пока пользователь ищет в папке, автоматически догружаем следующие страницы в фоне
+    // Ограничитель автосканирования: максимум 8 страниц (~400 фильмов) на запрос
+    var autoScanPagesCount by remember(searchQuery) { mutableIntStateOf(0) }
     LaunchedEffect(searchQuery, movies.size, isLoadingMore) {
-        if (searchQuery.isNotBlank() && !isLoadingMore && !isSearchResultsView) {
+        if (searchQuery.isNotBlank() && !isLoadingMore && !isSearchResultsView && autoScanPagesCount < 8) {
             val nextItem = movies.find { it.id.startsWith("vp_next_") }
             if (nextItem != null) {
                 delay(200L)
+                autoScanPagesCount++
                 onAutoLoadMore(nextItem)
             }
         }
@@ -1703,23 +1719,14 @@ fun VodScreen(
                 }
             }
         }
-        val folderItemsCount = safeMovies.count { !it.id.startsWith("vp_next_") }
+        vval folderItemsCount = safeMovies.count { !it.id.startsWith("vp_next_") }
         val displayedTitle = if (canGoBack && folderItemsCount > 0) "$folderTitle ($folderItemsCount)" else folderTitle
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (canGoBack) Button(onClick = onBackFolder, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.padding(end = 10.dp)) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text(if (S.isRu) "Назад" else "Back") }
             Text(displayedTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = theme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        if (noticeMessage.isNotBlank()) Text(noticeMessage, fontSize = 12.sp, color = Color(0xFFF59E0B), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(8.dp)).background(theme.card).padding(10.dp))
-        if (safeMovies.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)) {
-                    Text(if (S.isRu) "В этом разделе пока пусто" else "No items loaded", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = theme.text)
-                    if (diagnosticLog.isNotBlank()) { Spacer(Modifier.height(10.dp)); Text(diagnosticLog, fontSize = 12.sp, color = theme.subtext, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(theme.card).padding(12.dp)) }
-                    Spacer(Modifier.height(16.dp)); Button(onClick = onOpenSettings) { Text(S.goToSettings) }
-                }
-            }
-            return
-        }
+
+        // Поле поиска отрисовывается ВСЕГДА, даже если в папке пусто!
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = searchQuery,
@@ -1745,14 +1752,32 @@ fun VodScreen(
                 },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { onServerSearch(searchQuery) }),
+                keyboardActions = KeyboardActions(onSearch = { if (searchQuery.isNotBlank()) onServerSearch(searchQuery) }),
                 modifier = Modifier.weight(1f).height(52.dp)
             )
-            Button(onClick = { onServerSearch(searchQuery) }, modifier = Modifier.height(52.dp)) {
+            Button(
+                onClick = { onServerSearch(searchQuery) },
+                enabled = searchQuery.isNotBlank(),
+                modifier = Modifier.height(52.dp)
+            ) {
                 Text(if (S.isRu) "Найти" else "Find")
             }
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
+
+        if (noticeMessage.isNotBlank()) Text(noticeMessage, fontSize = 12.sp, color = Color(0xFFF59E0B), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(8.dp)).background(theme.card).padding(10.dp))
+
+        if (safeMovies.isEmpty()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)) {
+                    Text(if (S.isRu) "В этом разделе пока пусто" else "No items loaded", fontSize = 19.sp, fontWeight = FontWeight.Bold, color = theme.text)
+                    if (diagnosticLog.isNotBlank()) { Spacer(Modifier.height(10.dp)); Text(diagnosticLog, fontSize = 12.sp, color = theme.subtext, modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(theme.card).padding(12.dp)) }
+                    Spacer(Modifier.height(16.dp)); Button(onClick = onOpenSettings) { Text(S.goToSettings) }
+                }
+            }
+            return
+        }
+        Spacer(Modifier.height(2.dp))
         LazyVerticalGrid(columns = GridCells.Adaptive(minSize = 150.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxSize()) {
             items(filtered, key = { it.id }) { movie ->
                 if (movie.id.startsWith("vp_next_")) LaunchedEffect(movie.id) { if (searchQuery.isBlank() && !isLoadingMore) onAutoLoadMore(movie) }
