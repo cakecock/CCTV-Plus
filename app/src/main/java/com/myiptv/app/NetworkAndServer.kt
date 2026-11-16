@@ -403,8 +403,16 @@ object NetworkLoader {
             if (key.isNotEmpty() && !reqObj.has("key")) reqObj.put("key", key)
             if (reqObj.has("limit") && reqObj.optInt("limit", 0) <= 0) reqObj.put("limit", PAGE_SIZE)
             if (!searchQuery.isNullOrBlank()) {
-                if (!reqObj.has("cmd")) reqObj.put("cmd", "flicks")
-                reqObj.put("search", searchQuery); reqObj.put("query", searchQuery); reqObj.put("offset", 0); reqObj.put("limit", PAGE_SIZE)
+                val cleanQ = searchQuery.trim()
+                if (!reqObj.has("cmd") && !reqObj.has("action")) {
+                    reqObj.put("cmd", "flicks")
+                }
+                reqObj.put("search", cleanQ)
+                reqObj.put("query", cleanQ)
+                reqObj.put("find", cleanQ)
+                reqObj.put("filter", cleanQ)
+                reqObj.put("offset", 0)
+                reqObj.put("limit", 100)
             }
             val payloadStr = reqObj.toString()
             val request = Request.Builder().url(targetUrl).header("User-Agent", OTT_UA).header("Accept", "application/json")
@@ -649,7 +657,35 @@ object NetworkLoader {
         }
         directFallback
     }
-
+suspend fun searchStalkerVod(portalUrl: String, mac: String, query: String): List<VodMovie> = withContext(Dispatchers.IO) {
+        val movies = mutableListOf<VodMovie>()
+        if (portalUrl.isBlank() || mac.isBlank() || query.isBlank()) return@withContext movies
+        runSuspendCatching {
+            val base = normalizeStalkerBase(portalUrl)
+            val cookie = "mac=${java.net.URLEncoder.encode(mac, "UTF-8")}; stb_lang=ru; timezone=Europe/Moscow"
+            val token = getStalkerToken(base, mac, cookie)
+            if (token.isNotEmpty()) {
+                val encQ = java.net.URLEncoder.encode(query.trim(), "UTF-8")
+                val vodReq = Request.Builder().url("${base}portal.php?type=vod&action=get_ordered_list&search=$encQ&p=1&JsHttpRequest=1-xml")
+                    .header("Cookie", cookie).header("Authorization", "Bearer $token").header("User-Agent", STALKER_UA).build()
+                client.newCall(vodReq).execute().use { r ->
+                    val jsObj = JSONObject(r.body?.string() ?: "{}").optJSONObject("js")
+                    val data = jsObj?.optJSONArray("data") ?: JSONArray()
+                    for (i in 0 until data.length()) {
+                        val item = data.getJSONObject(i)
+                        val cmd = item.optString("cmd").trim()
+                        if (cmd.isNotEmpty()) {
+                            val title = item.optString("name", "Фильм")
+                            val poster = resolveRelativePosterUrl(item.optString("screenshot_uri"), base)
+                            val vodId = "stk_vod_${shortSha256("${item.optString("id")}_$cmd")}"
+                            movies.add(VodMovie(vodId, title, "Stalker VOD", poster.ifEmpty { null }, item.optString("description"), item.optString("year"), item.optString("rating_imdb"), "stalker_vod:::${base}|||${mac}|||${cmd}"))
+                        }
+                    }
+                }
+            }
+        }
+        movies
+    }
     private fun parseXmlDateFast(raw: String?): Long {
         if (raw.isNullOrBlank() || raw.length < 14) return 0L
         return runCatching {
