@@ -1214,9 +1214,9 @@ class MainActivity : ComponentActivity() {
                                     NavigationBarItem(selected = currentTab == 1, onClick = { currentTab = 1 }, icon = { Icon(Icons.Default.Movie, null) }, label = { Text("${S.vod} (${vodItems.count { !it.id.startsWith("vp_next_") }})") })
                                     NavigationBarItem(selected = currentTab == 2, onClick = { currentTab = 2 }, icon = { Icon(Icons.Default.Settings, null) }, label = { Text(S.settings) })
                                 }
-                                if (isLoading || isLoadingMoreVod) LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = themePalette.primary)
 
-                                when (currentTab) {
+                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                    when (currentTab) {
                                     0 -> LiveTvScreen(
                                         S, themePalette, playlists, selectedPlaylistId, onSelectPlaylistId = { selectedPlaylistId = it; reloadAllData(forceRefresh = false) },
                                         visibleChannels, epgScheduleMap, favoriteIds, currentChannel, previousChannel, activeArchiveProgram, activeArchiveUrl,
@@ -1356,6 +1356,13 @@ class MainActivity : ComponentActivity() {
                                         onSaveAndReload = { reloadAllData(forceRefresh = true) }, onSettingsImported = { refreshStateFromPrefs() },
                                         qrServer = qrServer
                                     )
+                                    }
+                                    if (isLoading) {
+                                        LinearProgressIndicator(
+                                            modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
+                                            color = themePalette.primary
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1697,10 +1704,7 @@ fun VodScreen(
             }
         }
         val folderItemsCount = safeMovies.count { !it.id.startsWith("vp_next_") }
-        val displayedTitle = when {
-            isLoadingMore && searchQuery.isNotBlank() && !isSearchResultsView -> "$folderTitle (⏳ $folderItemsCount)"
-            canGoBack && folderItemsCount > 0 -> "$folderTitle ($folderItemsCount)"
-            else -> folderTitle
+        val displayedTitle = if (canGoBack && folderItemsCount > 0) "$folderTitle ($folderItemsCount)" else folderTitle
         }
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (canGoBack) Button(onClick = onBackFolder, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.padding(end = 10.dp)) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text(if (S.isRu) "Назад" else "Back") }
