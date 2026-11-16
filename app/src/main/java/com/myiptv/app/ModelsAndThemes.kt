@@ -42,7 +42,9 @@ data class EpgProgramItem(
     val title: String,
     val startMs: Long,
     val stopMs: Long,
-    val timeRangeText: String
+    val timeRangeText: String,
+    val desc: String = "",
+    val category: String = ""
 )
 
 data class ProgramReminder(
@@ -255,10 +257,13 @@ fun verifyParentalPin(prefs: SharedPreferences, inputPin: String): Boolean {
             return okLegacyIter
         }
     }
-    val legacyPin = prefs.getString(LEGACY_PIN_KEY, "0000") ?: "0000"
-    val ok = cleanInput == legacyPin
-    if (ok) setParentalPin(prefs, legacyPin)
-    return ok
+    val legacyPin = prefs.getString(LEGACY_PIN_KEY, null)?.trim()
+    if (!legacyPin.isNullOrBlank() && legacyPin != "0000") {
+        val ok = cleanInput == legacyPin
+        if (ok) setParentalPin(prefs, legacyPin)
+        return ok
+    }
+    return false
 }
 
 val LicenseItemsRu = listOf(
@@ -559,9 +564,10 @@ fun saveNamedList(prefs: SharedPreferences, jsonKey: String, list: List<NamedSou
     prefs.edit().putString(jsonKey, arr.toString()).apply()
 }
 
-fun exportAllSettingsToJson(prefs: SharedPreferences): String {
+fun exportAllSettingsToJson(prefs: SharedPreferences, includeSecrets: Boolean = false): String {
     val root = JSONObject()
     root.put("app", "CCTV Plus")
+    root.put("secrets_included", includeSecrets)
     root.put("lang", prefs.getString("lang", "ru"))
     root.put("device_type", prefs.getString("device_type", "mobile"))
     root.put("control_mode", prefs.getString("control_mode", "touch"))
@@ -571,18 +577,20 @@ fun exportAllSettingsToJson(prefs: SharedPreferences): String {
     root.put("epg_offset_hours", prefs.getInt("epg_offset_hours", 0))
     root.put("parental_enabled", prefs.getBoolean("parental_enabled", false))
     root.put("theme_id", prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
-    root.put("playlists_json", prefs.getString("playlists_json", "[]"))
-    root.put("selected_playlist_id", prefs.getString("selected_playlist_id", ""))
-    root.put("epgs_json", prefs.getString("epgs_json", "[]"))
-    root.put("selected_epg_id", prefs.getString("selected_epg_id", "AUTO_PLAYLIST"))
     root.put("use_playlist_epg", prefs.getBoolean("use_playlist_epg", true))
-    root.put("vportal_url", prefs.getString("vportal_url", ""))
-    root.put("stalker_url", prefs.getString("stalker_url", ""))
-    root.put("stalker_mac", prefs.getString("stalker_mac", ""))
     root.put("player_resize", prefs.getInt("player_resize", 0))
     root.put("player_buffer", prefs.getInt("player_buffer", 1))
     root.put("player_ua", prefs.getString("player_ua", "Lavf/60.3.100"))
     root.put("player_auto_fs", prefs.getBoolean("player_auto_fs", false))
+    if (includeSecrets) {
+        root.put("playlists_json", prefs.getString("playlists_json", "[]"))
+        root.put("selected_playlist_id", prefs.getString("selected_playlist_id", ""))
+        root.put("epgs_json", prefs.getString("epgs_json", "[]"))
+        root.put("selected_epg_id", prefs.getString("selected_epg_id", "AUTO_PLAYLIST"))
+        root.put("vportal_url", prefs.getString("vportal_url", ""))
+        root.put("stalker_url", prefs.getString("stalker_url", ""))
+        root.put("stalker_mac", prefs.getString("stalker_mac", ""))
+    }
     val favArr = JSONArray(); prefs.getStringSet("favs", emptySet())?.forEach { favArr.put(it) }; root.put("favs", favArr)
     val hidArr = JSONArray(); prefs.getStringSet("hidden_groups", emptySet())?.forEach { hidArr.put(it) }; root.put("hidden_groups", hidArr)
     val lockArr = JSONArray(); prefs.getStringSet("locked_groups", emptySet())?.forEach { lockArr.put(it) }; root.put("locked_groups", lockArr)
@@ -634,14 +642,16 @@ fun importAllSettingsFromJson(prefs: SharedPreferences, jsonStr: String): Boolea
         .putInt("epg_offset_hours", root.optInt("epg_offset_hours", 0).coerceIn(-12, 12))
         .putBoolean("parental_enabled", root.optBoolean("parental_enabled", false))
         .putString("theme_id", AppThemePalette.fromId(root.optString("theme_id")).id)
-        .putString("playlists_json", sanitizeNamedSourcesJson(root.optString("playlists_json", "[]")))
-        .putString("selected_playlist_id", root.optString("selected_playlist_id", ""))
-        .putString("epgs_json", sanitizeNamedSourcesJson(root.optString("epgs_json", "[]")))
-        .putString("selected_epg_id", root.optString("selected_epg_id", "AUTO_PLAYLIST"))
         .putBoolean("use_playlist_epg", root.optBoolean("use_playlist_epg", true))
-        .putString("vportal_url", root.optString("vportal_url", "").trim())
-        .putString("stalker_url", root.optString("stalker_url", "").trim())
-        .putString("stalker_mac", root.optString("stalker_mac", "").trim())
+        .apply {
+            if (root.has("playlists_json")) putString("playlists_json", sanitizeNamedSourcesJson(root.optString("playlists_json", "[]")))
+            if (root.has("selected_playlist_id")) putString("selected_playlist_id", root.optString("selected_playlist_id", ""))
+            if (root.has("epgs_json")) putString("epgs_json", sanitizeNamedSourcesJson(root.optString("epgs_json", "[]")))
+            if (root.has("selected_epg_id")) putString("selected_epg_id", root.optString("selected_epg_id", "AUTO_PLAYLIST"))
+            if (root.has("vportal_url")) putString("vportal_url", root.optString("vportal_url", "").trim())
+            if (root.has("stalker_url")) putString("stalker_url", root.optString("stalker_url", "").trim())
+            if (root.has("stalker_mac")) putString("stalker_mac", root.optString("stalker_mac", "").trim())
+        }
         .putInt("player_resize", root.optInt("player_resize", 0).coerceIn(0, 2))
         .putInt("player_buffer", root.optInt("player_buffer", 1).coerceIn(0, 2))
         .putString("player_ua", root.optString("player_ua", "Lavf/60.3.100").ifBlank { "Lavf/60.3.100" })
