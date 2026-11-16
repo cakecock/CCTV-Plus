@@ -66,7 +66,8 @@ data class VodMovie(
     val streamUrl: String,
     val isFolder: Boolean = false,
     val requestPayloadJson: String? = null,
-    val targetApiUrl: String? = null
+    val targetApiUrl: String? = null,
+    val itemCount: Int = 0
 )
 
 data class VodProgressItem(
