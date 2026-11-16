@@ -335,7 +335,7 @@ class MainActivity : ComponentActivity() {
             var playerBufferMode by remember { mutableStateOf(prefs.getInt("player_buffer", 1).coerceIn(0, 2)) }
             var playerDefaultUa by remember { mutableStateOf(prefs.getString("player_ua", "Lavf/60.3.100") ?: "Lavf/60.3.100") }
             var openFullscreenOnTap by remember { mutableStateOf(prefs.getBoolean("player_auto_fs", false)) }
-
+            var playerSwipeGestures by remember { mutableStateOf(prefs.getBoolean("player_swipe_gestures", true)) }
             var playlists by remember { mutableStateOf(loadNamedList(prefs, "playlists_json", "m3u_url", "Основной плейлист")) }
             var selectedPlaylistId by remember { mutableStateOf(prefs.getString("selected_playlist_id", playlists.firstOrNull()?.id ?: "") ?: "") }
             var epgSources by remember { mutableStateOf(loadNamedList(prefs, "epgs_json", "epg_url", "Моя программа EPG")) }
@@ -477,6 +477,7 @@ class MainActivity : ComponentActivity() {
                     .putString("stalker_url", stalkerUrl.trim()).putString("stalker_mac", stalkerMac.trim())
                     .putInt("player_resize", playerResizeMode).putInt("player_buffer", playerBufferMode)
                     .putString("player_ua", playerDefaultUa).putBoolean("player_auto_fs", openFullscreenOnTap)
+                    .putBoolean("player_swipe_gestures", playerSwipeGestures)
                     .apply()
             }
 
@@ -617,6 +618,7 @@ class MainActivity : ComponentActivity() {
                 playerResizeMode = prefs.getInt("player_resize", 0).coerceIn(0, 2); playerBufferMode = prefs.getInt("player_buffer", 1).coerceIn(0, 2)
                 playerDefaultUa = prefs.getString("player_ua", "Lavf/60.3.100") ?: "Lavf/60.3.100"
                 openFullscreenOnTap = prefs.getBoolean("player_auto_fs", false)
+                playerSwipeGestures = prefs.getBoolean("player_swipe_gestures", true)
                 favoriteIds = prefs.getStringSet("favs", emptySet())?.toSet() ?: emptySet()
                 hiddenGroups = loadHiddenGroups(prefs)
                 lockedGroups = loadLockedGroups(prefs)
@@ -1065,7 +1067,7 @@ class MainActivity : ComponentActivity() {
                                     useNativeController = (isVod || playerEngine == 1) && !isInPipModeState,
                                     reconnectingText = S.reconnecting,
                                     playerEngine = playerEngine,
-                                    enableSwipeGestures = controlMode == "touch" && !isInPipModeState,
+                                    enableSwipeGestures = playerSwipeGestures && controlMode == "touch" && !isInPipModeState,
                                     playbackSpeed = if (isVod || isArchive) playbackSpeed else 1f,
                                     initialSeekMs = if (isVod) vodInitialSeekMs else 0L,
                                     seekCommand = seekCommand,
@@ -1382,6 +1384,8 @@ class MainActivity : ComponentActivity() {
                                         playerResizeMode, playerBufferMode, playerDefaultUa, openFullscreenOnTap,
                                         onPlayerResizeChange = { playerResizeMode = it; persistLists() }, onPlayerBufferChange = { playerBufferMode = it; persistLists() },
                                         onPlayerUaChange = { playerDefaultUa = it; persistLists() }, onAutoFsChange = { openFullscreenOnTap = it; persistLists() },
+                                        playerSwipeGestures = playerSwipeGestures,
+                                        onSwipeGesturesChange = { playerSwipeGestures = it; persistLists() },
                                         playlists, selectedPlaylistId, onSelectPlaylist = { selectedPlaylistId = it; reloadAllData(forceRefresh = false) },
                                         onAddPlaylist = { name, url -> val id = "pl_${System.currentTimeMillis()}"; playlists = playlists + NamedSource(id, name, url); selectedPlaylistId = id; reloadAllData(forceRefresh = true) },
                                         onDeletePlaylist = { id ->
