@@ -1016,7 +1016,11 @@ fun TiviMateTvOverlay(
                                         isFuture -> Text("🕒", fontSize = 10.sp, color = Color.Gray)
                                     }
                                 }
-                                Text(prog.title, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 2)
+                               Text(prog.title, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 2)
+                                if (prog.category.isNotBlank() || prog.desc.isNotBlank()) {
+                                    val sub = listOf(prog.category, prog.desc).filter { it.isNotBlank() }.joinToString(" • ")
+                                    Text(sub, fontSize = 11.sp, color = Color.LightGray, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
                             }
                         }
                     }
@@ -1097,7 +1101,7 @@ fun MultiViewScreenOverlay(
 }
 
 @Composable
-fun ParentalPinDialog(S: Strings, theme: AppThemePalette, expectedPin: String, onSuccess: () -> Unit, onDismiss: () -> Unit) {
+fun ParentalPinDialog(S: Strings, theme: AppThemePalette, onSuccess: () -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("cctv_plus_prefs", Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
