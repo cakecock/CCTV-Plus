@@ -1705,7 +1705,6 @@ fun VodScreen(
         }
         val folderItemsCount = safeMovies.count { !it.id.startsWith("vp_next_") }
         val displayedTitle = if (canGoBack && folderItemsCount > 0) "$folderTitle ($folderItemsCount)" else folderTitle
-        }
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (canGoBack) Button(onClick = onBackFolder, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.padding(end = 10.dp)) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text(if (S.isRu) "Назад" else "Back") }
             Text(displayedTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = theme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
