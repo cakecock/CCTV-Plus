@@ -1222,7 +1222,6 @@ class MainActivity : ComponentActivity() {
                                             Icon(Icons.Default.SkipNext, contentDescription = if (S.isRu) "Следующий канал" else "Next channel", tint = Color.White)
                                         }
                                     }
-                                    }
 
                                     if (showTiviMateOverlay) {
                                         TiviMateTvOverlay(
