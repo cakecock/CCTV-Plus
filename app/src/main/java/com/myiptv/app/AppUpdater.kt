@@ -203,7 +203,8 @@ object GitHubUpdater {
         sha256Url: String? = null,
         onProgress: (percent: Int, downloadedMb: String, totalMb: String) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
-        val outDir = context.getExternalFilesDir(null) ?: context.cacheDir
+        val baseDir = context.getExternalFilesDir(null) ?: context.cacheDir
+        val outDir = File(baseDir, "updates").apply { mkdirs() }
         val tmpFile = File(outDir, "CCTV-Plus-Update.apk.tmp")
         val apkFile = File(outDir, "CCTV-Plus-Update.apk")
 
