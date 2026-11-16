@@ -70,6 +70,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URI
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -1013,11 +1015,43 @@ fun TiviMateTvOverlay(
             value = System.currentTimeMillis()
         }
     }
+    val channelsListState = rememberLazyListState()
     val epgListState = rememberLazyListState()
+    var archiveOnlyTab by remember { mutableStateOf(false) }
 
-    LaunchedEffect(previewChannel, previewSchedule) {
-        val liveIdx = previewSchedule.indexOfFirst { now in it.startMs..it.stopMs }
-        if (liveIdx > 0) epgListState.scrollToItem((liveIdx - 1).coerceAtLeast(0))
+    val hourlyArchiveSlots = remember(previewChannel, now, archiveDays, S.isRu) {
+        val ch = previewChannel ?: return@remember emptyList()
+        val hourMs = 3_600_000L
+        val maxHours = (archiveDays.coerceIn(1, 5) * 24).coerceAtMost(48)
+        val curHourStart = (now / hourMs) * hourMs
+        val timeFmt = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
+        val shortFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+        val startOffset = if ((now - curHourStart) >= 60_000L) 0 else 1
+        (startOffset until maxHours).map { hOffset ->
+            val start = curHourStart - hOffset * hourMs
+            val stop = start + hourMs
+            val range = "${timeFmt.format(Date(start))} - ${shortFmt.format(Date(stop))}"
+            val title = if (hOffset == 0) {
+                if (S.isRu) "⏪ С начала текущего часа" else "⏪ From hour start"
+            } else {
+                if (S.isRu) "⏪ Архив (-${hOffset} ч)" else "⏪ Archive (-${hOffset}h)"
+            }
+            EpgProgramItem(title = title, startMs = start, stopMs = stop, timeRangeText = range)
+        }
+    }
+
+    LaunchedEffect(selGroup, groupChannels.size) {
+        val chIdx = groupChannels.indexOfFirst { it.id == previewChannel?.id }
+        if (chIdx > 0) channelsListState.scrollToItem((chIdx - 2).coerceAtLeast(0))
+    }
+
+    LaunchedEffect(previewChannel, previewSchedule, archiveOnlyTab) {
+        if (!archiveOnlyTab) {
+            val liveIdx = previewSchedule.indexOfFirst { now in it.startMs..it.stopMs }
+            if (liveIdx > 0) epgListState.scrollToItem((liveIdx - 1).coerceAtLeast(0))
+        } else {
+            epgListState.scrollToItem(0)
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color(0xBB090B0E)).padding(14.dp)) {
@@ -1035,7 +1069,7 @@ fun TiviMateTvOverlay(
             }
             Column(modifier = Modifier.weight(1.15f).fillMaxHeight().clip(RoundedCornerShape(12.dp)).background(Color(0xDD141820)).padding(8.dp)) {
                 Text(if (S.isRu) "2. Каналы (${groupChannels.size})" else "2. Channels (${groupChannels.size})", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, modifier = Modifier.padding(6.dp))
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                LazyColumn(state = channelsListState, verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     items(groupChannels, key = { it.id }) { ch ->
                         val isPreview = previewChannel?.id == ch.id
                         Row(
@@ -1056,12 +1090,83 @@ fun TiviMateTvOverlay(
                     Text("3. ${previewChannel?.name ?: defaultGuide}", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = theme.primary, maxLines = 1, modifier = Modifier.weight(1f))
                     IconButton(onClick = onClose, modifier = Modifier.size(28.dp)) { Icon(Icons.Default.Close, null, tint = Color.White) }
                 }
-                if (previewSchedule.isEmpty()) {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Button(onClick = { previewChannel?.let { onSelectChannel(it); onClose() } }) { Text(if (S.isRu) "▶ Включить" else "▶ Watch") }
+
+                Button(
+                    onClick = { previewChannel?.let { onSelectChannel(it); onClose() } },
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    contentPadding = PaddingValues(vertical = 6.dp, horizontal = 10.dp)
+                ) {
+                    Text(if (S.isRu) "▶ Включить" else "▶ Watch", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+
+                if (previewSchedule.isNotEmpty()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                        Box(
+                            modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
+                                .background(if (!archiveOnlyTab) theme.primary else Color(0x55000000))
+                                .tvFocusHighlight(Color.White, 8.dp)
+                                .clickable { archiveOnlyTab = false }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(if (S.isRu) "📺 Гид" else "📺 Guide", color = if (!archiveOnlyTab) theme.onPrimary else Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
+                        Box(
+                            modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
+                                .background(if (archiveOnlyTab) Color(0xFFF59E0B) else Color(0x55000000))
+                                .tvFocusHighlight(Color.White, 8.dp)
+                                .clickable { archiveOnlyTab = true }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(if (S.isRu) "⏪ Архив" else "⏪ Archive", color = if (archiveOnlyTab) Color.Black else Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
                     }
                 } else {
-                    LazyColumn(state = epgListState, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        if (S.isRu) "⏪ Архив по времени (EPG не найден):" else "⏪ Time Archive (no EPG):",
+                        fontSize = 11.sp, color = Color(0xFFF59E0B), fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                }
+
+                if (previewSchedule.isEmpty()) {
+                    LazyColumn(state = epgListState, verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
+                        items(hourlyArchiveSlots) { slot ->
+                            Column(
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0x66000000))
+                                    .tvFocusHighlight(Color.White, 8.dp).clickable {
+                                        previewChannel?.let { ch -> onPlayArchive(ch, slot); onClose() }
+                                    }.padding(8.dp)
+                            ) {
+                                Text(slot.timeRangeText, fontSize = 11.sp, color = Color.LightGray)
+                                Text(slot.title, fontSize = 12.sp, color = Color(0xFFF59E0B), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            }
+                        }
+                    }
+                } else if (archiveOnlyTab) {
+                    val pastPrograms = remember(previewSchedule, now) {
+                        previewSchedule.filter { it.startMs < now }.sortedByDescending { it.startMs }
+                    }
+                    val archiveList = pastPrograms.ifEmpty { hourlyArchiveSlots }
+                    LazyColumn(state = epgListState, verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
+                        items(archiveList) { prog ->
+                            Column(
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color(0x66000000))
+                                    .tvFocusHighlight(Color.White, 8.dp).clickable {
+                                        previewChannel?.let { ch -> onPlayArchive(ch, prog); onClose() }
+                                    }.padding(8.dp)
+                            ) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(prog.timeRangeText, fontSize = 11.sp, color = Color.LightGray)
+                                    Text(if (S.isRu) "⏪ АРХИВ" else "⏪ CATCHUP", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFFF59E0B))
+                                }
+                                Text(prog.title, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 2)
+                            }
+                        }
+                    }
+                } else {
+                    LazyColumn(state = epgListState, verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.weight(1f)) {
                         items(previewSchedule) { prog ->
                             val isPast = prog.stopMs < now; val isNow = now in prog.startMs..prog.stopMs; val isFuture = prog.startMs > now
                             val canArchive = isPast && (previewChannel?.catchupDays ?: 0) > 0 &&
@@ -1083,7 +1188,7 @@ fun TiviMateTvOverlay(
                                         isFuture -> Text("🕒", fontSize = 10.sp, color = Color.Gray)
                                     }
                                 }
-                               Text(prog.title, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 2)
+                                Text(prog.title, fontSize = 13.sp, color = Color.White, fontWeight = FontWeight.Medium, maxLines = 2)
                                 if (prog.category.isNotBlank() || prog.desc.isNotBlank()) {
                                     val sub = listOf(prog.category, prog.desc).filter { it.isNotBlank() }.joinToString(" • ")
                                     Text(sub, fontSize = 11.sp, color = Color.LightGray, maxLines = 2, overflow = TextOverflow.Ellipsis)
