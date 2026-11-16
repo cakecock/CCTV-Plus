@@ -288,6 +288,8 @@ fun AccordionSettingsScreen(
     onPlayerBufferChange: (Int) -> Unit,
     onPlayerUaChange: (String) -> Unit,
     onAutoFsChange: (Boolean) -> Unit,
+    playerSwipeGestures: Boolean = true,
+    onSwipeGesturesChange: (Boolean) -> Unit = {},
     playlists: List<NamedSource>,
     selectedPlaylistId: String,
     onSelectPlaylist: (String) -> Unit,
@@ -719,6 +721,11 @@ fun AccordionSettingsScreen(
                 Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(theme.bg).padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(if (S.isRu) "Сразу на весь экран" else "Auto Fullscreen", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = theme.text)
                     Switch(checked = openFullscreenOnTap, onCheckedChange = onAutoFsChange)
+                }
+
+                Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(theme.bg).padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(if (S.isRu) "Жесты яркости и громкости (свайпы)" else "Brightness & Volume Swipes", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = theme.text, modifier = Modifier.weight(1f))
+                    Switch(checked = playerSwipeGestures, onCheckedChange = onSwipeGesturesChange)
                 }
 
                 val minUnit = if (S.isRu) "мин" else "min"
