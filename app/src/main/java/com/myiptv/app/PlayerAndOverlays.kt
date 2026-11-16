@@ -140,7 +140,12 @@ fun SmartVideoPlayer(
             modifier = modifier,
             isRu = isRu,
             isPipMode = isPipMode,
-            onNextChannel = onNextChannel
+            onNextChannel = onNextChannel,
+            playbackSpeed = playbackSpeed,
+            initialSeekMs = initialSeekMs,
+            seekCommand = seekCommand,
+            onPlaybackProgress = onPlaybackProgress,
+            onPlaybackStopped = onPlaybackStopped
         )
     } else {
         ExoVideoPlayer(
@@ -183,7 +188,12 @@ fun NativeAndroidVideoPlayer(
     modifier: Modifier = Modifier,
     isRu: Boolean = true,
     isPipMode: Boolean = false,
-    onNextChannel: (() -> Unit)? = null
+    onNextChannel: (() -> Unit)? = null,
+    playbackSpeed: Float = 1f,
+    initialSeekMs: Long = 0L,
+    seekCommand: Pair<Int, Long>? = null,
+    onPlaybackProgress: (posMs: Long, durMs: Long) -> Unit = { _, _ -> },
+    onPlaybackStopped: ((posMs: Long, durMs: Long) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -191,11 +201,53 @@ fun NativeAndroidVideoPlayer(
     var resolvedUrl by remember(streamUrl) { mutableStateOf("") }
     var reloadTrigger by remember { mutableIntStateOf(0) }
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
+    var mediaPlayerRef by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
     var attachedController by remember { mutableStateOf<Boolean?>(null) }
+    var didInitialSeek by remember(streamUrl, initialSeekMs) { mutableStateOf(false) }
+    val curInitialSeekMs by rememberUpdatedState(initialSeekMs)
+    val curPlaybackSpeed by rememberUpdatedState(playbackSpeed)
+    val curOnProgress by rememberUpdatedState(onPlaybackProgress)
+    val curOnStopped by rememberUpdatedState(onPlaybackStopped)
 
     LaunchedEffect(streamUrl, reloadTrigger) {
         hasError = false
         resolvedUrl = if (streamUrl.isNotBlank()) NetworkLoader.resolveStalkerStreamIfNeeded(streamUrl) else ""
+    }
+
+    LaunchedEffect(playbackSpeed, mediaPlayerRef) {
+        runCatching {
+            mediaPlayerRef?.let { mp ->
+                mp.playbackParams = mp.playbackParams.setSpeed(playbackSpeed)
+            }
+        }
+    }
+
+    LaunchedEffect(seekCommand) {
+        if (seekCommand != null) {
+            videoViewRef?.let { vv ->
+                runCatching {
+                    val dur = vv.duration
+                    val target = (vv.currentPosition + seekCommand.second.toInt()).let {
+                        if (dur > 0) it.coerceIn(0, dur) else it.coerceAtLeast(0)
+                    }
+                    vv.seekTo(target)
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(videoViewRef, resolvedUrl) {
+        while (true) {
+            delay(4000L)
+            val vv = videoViewRef ?: continue
+            runCatching {
+                if (vv.isPlaying) {
+                    val dur = vv.duration.toLong()
+                    val pos = vv.currentPosition.toLong()
+                    if (dur > 30_000L && pos > 5_000L) curOnProgress(pos, dur)
+                }
+            }
+        }
     }
 
     DisposableEffect(lifecycleOwner, videoViewRef) {
@@ -217,9 +269,15 @@ fun NativeAndroidVideoPlayer(
     DisposableEffect(Unit) {
         onDispose {
             runCatching {
+                videoViewRef?.let { vv ->
+                    val dur = vv.duration.toLong()
+                    val pos = vv.currentPosition.toLong()
+                    if (dur > 30_000L && pos > 5_000L) curOnStopped?.invoke(pos, dur)
+                }
                 videoViewRef?.stopPlayback()
                 videoViewRef?.setVideoURI(null)
             }
+            mediaPlayerRef = null
             videoViewRef = null
         }
     }
@@ -251,8 +309,16 @@ fun NativeAndroidVideoPlayer(
                     view.tag = expectedKey
                     hasError = false
                     view.setOnPreparedListener { mp ->
+                        mediaPlayerRef = mp
                         val vol = if (isMuted) 0f else 1f
                         mp.setVolume(vol, vol)
+                        if (curPlaybackSpeed != 1f) {
+                            runCatching { mp.playbackParams = mp.playbackParams.setSpeed(curPlaybackSpeed) }
+                        }
+                        if (!didInitialSeek && curInitialSeekMs > 5000L) {
+                            didInitialSeek = true
+                            runCatching { mp.seekTo(curInitialSeekMs.toInt()) }
+                        }
                         mp.start()
                     }
                     view.setOnErrorListener { _, _, _ -> hasError = true; true }
@@ -342,6 +408,7 @@ fun ExoVideoPlayer(
     val curOnProgress by rememberUpdatedState(onPlaybackProgress)
     val curOnDoubleTapSeek by rememberUpdatedState(onDoubleTapSeekDelta)
     val curOnStopped by rememberUpdatedState(onPlaybackStopped)
+    val curInitialSeekMs by rememberUpdatedState(initialSeekMs)
     val scope = rememberCoroutineScope()
 
     val mediaAudioAttributes = remember {
@@ -517,9 +584,9 @@ fun ExoVideoPlayer(
                         pendingReconnectSeekMs = 0L
                         didInitialSeek = true
                         exoPlayer.seekTo(target)
-                    } else if (!didInitialSeek && initialSeekMs > 5000L) {
+                    } else if (!didInitialSeek && curInitialSeekMs > 5000L) {
                         didInitialSeek = true
-                        exoPlayer.seekTo(initialSeekMs)
+                        exoPlayer.seekTo(curInitialSeekMs)
                     }
                 }
             }
