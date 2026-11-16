@@ -72,8 +72,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -138,7 +140,14 @@ private fun scheduleReminderAlarm(context: Context, rem: ProgramReminder) {
         intent,
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
-    runCatching { am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, rem.startMs, pi) }
+    runCatching {
+        val canExact = if (Build.VERSION.SDK_INT >= 31) am.canScheduleExactAlarms() else true
+        if (canExact) {
+            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, rem.startMs, pi)
+        } else {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, rem.startMs, pi)
+        }
+    }
 }
 
 private fun cancelReminderAlarm(context: Context, rem: ProgramReminder) {
@@ -283,9 +292,11 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("cctv_plus_prefs", Context.MODE_PRIVATE)
 
         runCatching {
-            val legacyPin = prefs.getString("parental_pin", null)
-            if (!legacyPin.isNullOrBlank() && prefs.getString("parental_pin_hash", null).isNullOrBlank()) {
+            val legacyPin = prefs.getString("parental_pin", null)?.trim()
+            if (!legacyPin.isNullOrBlank() && legacyPin != "0000" && prefs.getString("parental_pin_hash", null).isNullOrBlank()) {
                 setParentalPin(prefs, legacyPin)
+            } else if (legacyPin == "0000") {
+                prefs.edit().remove("parental_pin").apply()
             }
         }
 
@@ -300,7 +311,9 @@ class MainActivity : ComponentActivity() {
             var archiveDays by remember { mutableStateOf(prefs.getInt("archive_days", 3).coerceIn(1, 5)) }
             var epgOffsetHours by remember { mutableStateOf(prefs.getInt("epg_offset_hours", 0).coerceIn(-12, 12)) }
             var parentalEnabled by remember { mutableStateOf(prefs.getBoolean("parental_enabled", false)) }
-            var parentalPin by remember { mutableStateOf("") }
+            var showStartupForcePinDialog by remember { mutableStateOf(parentalEnabled && !hasCustomParentalPin(prefs)) }
+            var startupPinInput by remember { mutableStateOf("") }
+            var startupPinError by remember { mutableStateOf("") }
             var adultUnlockedSession by remember { mutableStateOf(false) }
             var pendingPinAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
@@ -566,6 +579,7 @@ class MainActivity : ComponentActivity() {
                 epgOffsetHours = prefs.getInt("epg_offset_hours", 0).coerceIn(-12, 12)
                 parentalEnabled = prefs.getBoolean("parental_enabled", false)
                 adultUnlockedSession = false
+                showStartupForcePinDialog = parentalEnabled && !hasCustomParentalPin(prefs)
                 themePalette = AppThemePalette.fromId(prefs.getString("theme_id", AppThemePalette.DARK_EMERALD.id))
                 playlists = loadNamedList(prefs, "playlists_json", "m3u_url", "Основной плейлист")
                 selectedPlaylistId = prefs.getString("selected_playlist_id", playlists.firstOrNull()?.id ?: "") ?: ""
@@ -795,8 +809,60 @@ class MainActivity : ComponentActivity() {
                                 dismissButton = { OutlinedButton(onClick = { triggeredReminder = null }) { Text(if (S.isRu) "Позже" else "Dismiss") } }
                             )
                         }
+                        if (showStartupForcePinDialog) {
+                            AlertDialog(
+                                onDismissRequest = {},
+                                containerColor = themePalette.card,
+                                titleContentColor = themePalette.text,
+                                textContentColor = themePalette.text,
+                                title = { Text(if (S.isRu) "🔐 Задайте свой PIN-код" else "🔐 Set Custom PIN", fontWeight = FontWeight.Bold) },
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(
+                                            if (S.isRu) "У вас включена защита 18+, но используется стандартный код 0000. Задайте собственный PIN (4–8 цифр):"
+                                            else "18+ lock is enabled with default 0000. Please set a custom PIN (4–8 digits):",
+                                            fontSize = 13.sp, color = themePalette.subtext
+                                        )
+                                        OutlinedTextField(
+                                            value = startupPinInput,
+                                            onValueChange = { startupPinInput = it.filter { c -> c.isDigit() }.take(8); startupPinError = "" },
+                                            visualTransformation = PasswordVisualTransformation(),
+                                            singleLine = true,
+                                            isError = startupPinError.isNotEmpty(),
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        if (startupPinError.isNotEmpty()) {
+                                            Text(startupPinError, color = Color(0xFFEF4444), fontSize = 12.sp)
+                                        }
+                                    }
+                                },
+                                confirmButton = {
+                                    Button(onClick = {
+                                        when {
+                                            startupPinInput.length < 4 -> startupPinError = if (S.isRu) "Минимум 4 цифры" else "At least 4 digits"
+                                            startupPinInput == "0000" -> startupPinError = if (S.isRu) "Код не должен быть 0000" else "Cannot use 0000"
+                                            else -> {
+                                                val pinVal = startupPinInput
+                                                scope.launch {
+                                                    withContext(Dispatchers.Default) { setParentalPin(prefs, pinVal) }
+                                                    showStartupForcePinDialog = false
+                                                    startupPinInput = ""
+                                                }
+                                            }
+                                        }
+                                    }) { Text(if (S.isRu) "Сохранить PIN" else "Save PIN") }
+                                },
+                                dismissButton = {
+                                    TextButton(onClick = {
+                                        parentalEnabled = false
+                                        showStartupForcePinDialog = false
+                                        persistLists()
+                                    }) { Text(if (S.isRu) "Выключить 18+" else "Disable 18+", color = themePalette.subtext) }
+                                }
+                            )
+                        }
                         if (pendingPinAction != null) {
-                            ParentalPinDialog(S, themePalette, parentalPin, onSuccess = { adultUnlockedSession = true; val act = pendingPinAction; pendingPinAction = null; act?.invoke() }, onDismiss = { pendingPinAction = null })
+                            ParentalPinDialog(S, themePalette, onSuccess = { adultUnlockedSession = true; val act = pendingPinAction; pendingPinAction = null; act?.invoke() }, onDismiss = { pendingPinAction = null })
                         }
                         if (showHiddenGroupsDialog) {
                             HiddenCategoriesDialog(
@@ -1154,13 +1220,13 @@ class MainActivity : ComponentActivity() {
                                     )
                                     2 -> AccordionSettingsScreen(
                                         S, prefs, themePalette, deviceType, controlMode, clockPosition, playerEngine, archiveDays, epgOffsetHours, (sleepSecondsLeft + 59) / 60, hiddenGroups.size,
-                                        parentalEnabled, parentalPin,
+                                        parentalEnabled,
                                         onDeviceTypeChange = { deviceType = it; persistLists() }, onControlModeChange = { controlMode = it; persistLists() },
                                         onClockPositionChange = { clockPosition = it; persistLists() }, onPlayerEngineChange = { playerEngine = it; persistLists() },
                                         onArchiveDaysChange = { archiveDays = it; persistLists(); loadEpgWithStatus(forceRefresh = false) },
                                         onEpgOffsetChange = { epgOffsetHours = it; persistLists(); loadEpgWithStatus(forceRefresh = false) },
                                         onSleepTimerChange = { sleepSecondsLeft = it * 60 }, onOpenHiddenGroups = { showHiddenGroupsDialog = true },
-                                        onParentalEnabledChange = { parentalEnabled = it; adultUnlockedSession = false; persistLists() }, onParentalPinChange = { parentalPin = it; persistLists() },
+                                        onParentalEnabledChange = { parentalEnabled = it; adultUnlockedSession = false; persistLists() },
                                         onSelectTheme = { themePalette = it; prefs.edit().putString("theme_id", it.id).apply() },
                                         onToggleLanguage = { isRu = !isRu; prefs.edit().putString("lang", if (isRu) "ru" else "en").apply() },
                                         playerResizeMode, playerBufferMode, playerDefaultUa, openFullscreenOnTap,
@@ -1335,6 +1401,11 @@ fun EpgAndArchiveDialog(
                             ) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(prog.timeRangeText, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = theme.subtext); Text(badgeText, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = badgeColor) }
                                 Spacer(Modifier.height(4.dp)); Text(prog.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = theme.text)
+                                if (prog.category.isNotBlank() || prog.desc.isNotBlank()) {
+                                    Spacer(Modifier.height(2.dp))
+                                    val sub = listOf(prog.category, prog.desc).filter { it.isNotBlank() }.joinToString(" • ")
+                                    Text(sub, fontSize = 12.sp, color = theme.subtext, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                }
                             }
                         }
                     }
