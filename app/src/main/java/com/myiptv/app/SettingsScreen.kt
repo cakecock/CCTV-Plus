@@ -269,7 +269,6 @@ fun AccordionSettingsScreen(
     sleepTimerMinutes: Int,
     hiddenGroupsCount: Int,
     parentalEnabled: Boolean,
-    parentalPin: String,
     onDeviceTypeChange: (String) -> Unit,
     onControlModeChange: (String) -> Unit,
     onClockPositionChange: (Int) -> Unit,
@@ -279,7 +278,6 @@ fun AccordionSettingsScreen(
     onSleepTimerChange: (Int) -> Unit,
     onOpenHiddenGroups: () -> Unit,
     onParentalEnabledChange: (Boolean) -> Unit,
-    onParentalPinChange: (String) -> Unit,
     onSelectTheme: (AppThemePalette) -> Unit,
     onToggleLanguage: () -> Unit,
     playerResizeMode: Int,
@@ -350,7 +348,8 @@ fun AccordionSettingsScreen(
     var showForceSetPinDialog by remember { mutableStateOf(false) }
     var forcePinInput by remember { mutableStateOf("") }
     var forcePinError by remember { mutableStateOf("") }
-    var pendingBackupExportAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var exportIncludeSecrets by remember { mutableStateOf(false) }
+    var pendingBackupExportAction by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
 
     var qrUrl by remember { mutableStateOf("") }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -400,7 +399,9 @@ fun AccordionSettingsScreen(
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
             runCatching {
-                context.contentResolver.openOutputStream(uri)?.use { it.write(exportAllSettingsToJson(prefs).toByteArray(Charsets.UTF_8)) }
+                context.contentResolver.openOutputStream(uri)?.use {
+                    it.write(exportAllSettingsToJson(prefs, includeSecrets = exportIncludeSecrets).toByteArray(Charsets.UTF_8))
+                }
                 backupStatus = if (S.isRu) "✅ Сохранено" else "✅ Exported"
             }.onFailure { backupStatus = "❌ ${it.localizedMessage}" }
         }
@@ -428,20 +429,32 @@ fun AccordionSettingsScreen(
             containerColor = theme.card,
             titleContentColor = theme.text,
             textContentColor = theme.text,
-            title = { Text(if (S.isRu) "⚠️ Внимание: приватные данные" else "⚠️ Security Notice", fontWeight = FontWeight.Bold) },
+            title = { Text(if (S.isRu) "💾 Режим резервной копии" else "💾 Backup Mode", fontWeight = FontWeight.Bold) },
             text = {
-                Text(
-                    if (S.isRu) "Резервная копия содержит ваши ссылки на плейлисты, ключи VPortal и Stalker MAC в открытом виде. Храните файл в надёжном месте и не делитесь им с посторонними."
-                    else "The backup includes your playlist URLs, VPortal keys, and Stalker MAC in plaintext. Store it safely and do not share it.",
-                    fontSize = 13.sp, color = theme.subtext
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (S.isRu) "Выберите вариант экспорта:\n• Без ключей — сохранит тему, избранное и настройки плеера без приватных ссылок/MAC.\n• Полный — включит плейлисты, ключи VPortal и Stalker MAC (не передавайте файл посторонним!)."
+                        else "Choose export mode:\n• Safe (no keys) — saves theme, favorites, and player settings only.\n• Full — includes playlists, VPortal keys, and Stalker MAC (do not share!).",
+                        fontSize = 13.sp, color = theme.subtext
+                    )
+                    OutlinedButton(
+                        onClick = {
+                            val act = pendingBackupExportAction
+                            pendingBackupExportAction = null
+                            act?.invoke(true)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (S.isRu) "🔑 Полный (со всеми ссылками)" else "🔑 Full (with URLs & keys)", color = theme.text)
+                    }
+                }
             },
             confirmButton = {
                 Button(onClick = {
                     val act = pendingBackupExportAction
                     pendingBackupExportAction = null
-                    act?.invoke()
-                }) { Text(if (S.isRu) "Продолжить" else "Continue") }
+                    act?.invoke(false)
+                }) { Text(if (S.isRu) "🛡 Без ключей (Безопасно)" else "🛡 Safe (No secrets)") }
             },
             dismissButton = {
                 TextButton(onClick = { pendingBackupExportAction = null }) { Text(if (S.isRu) "Отмена" else "Cancel", color = theme.subtext) }
@@ -490,7 +503,6 @@ fun AccordionSettingsScreen(
                                     withContext(Dispatchers.Default) { setParentalPin(prefs, pinVal) }
                                     isPinBusy = false
                                     showForceSetPinDialog = false
-                                    onParentalPinChange(pinVal)
                                     onParentalEnabledChange(true)
                                 }
                             }
@@ -822,7 +834,6 @@ fun AccordionSettingsScreen(
                                     } else {
                                         withContext(Dispatchers.Default) { setParentalPin(prefs, newPin) }
                                         isPinBusy = false
-                                        onParentalPinChange(newPin)
                                         curPinInput = ""
                                         newPinInput = ""
                                         pinChangeStatus = if (S.isRu) "✅ PIN надёжно сохранён" else "✅ PIN saved securely"
@@ -894,7 +905,12 @@ fun AccordionSettingsScreen(
         // 5. РЕЗЕРВНАЯ КОПИЯ
         item {
             ExpandableSectionRow(S.catBackup, expandedRow == 4, theme, { toggleRow(4) }) {
-                Button(onClick = { pendingBackupExportAction = { exportLauncher.launch("CCTV-Plus-Backup.json") } }, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = {
+                    pendingBackupExportAction = { withSecrets ->
+                        exportIncludeSecrets = withSecrets
+                        exportLauncher.launch("CCTV-Plus-Backup.json")
+                    }
+                }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.UploadFile, null); Spacer(Modifier.width(8.dp))
                     Text(if (S.isRu) "Сохранить в файл" else "Export to File")
                 }
@@ -904,9 +920,9 @@ fun AccordionSettingsScreen(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     OutlinedButton(onClick = {
-                        pendingBackupExportAction = {
+                        pendingBackupExportAction = { withSecrets ->
                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("CCTVBackup", exportAllSettingsToJson(prefs)))
+                            cm.setPrimaryClip(ClipData.newPlainText("CCTVBackup", exportAllSettingsToJson(prefs, includeSecrets = withSecrets)))
                             backupStatus = if (S.isRu) "✅ Скопировано" else "✅ Copied"
                         }
                     }, modifier = Modifier.weight(1f)) { Text(if (S.isRu) "Копировать" else "Copy") }
