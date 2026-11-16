@@ -52,13 +52,33 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Ensure Gradle Wrapper in Repository
+        run: |
+          if [ ! -f gradlew ] || [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "Generating official Gradle wrapper 8.7..."
+            gradle wrapper --gradle-version 8.7 --distribution-type bin
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add -f gradlew gradlew.bat gradle/wrapper/gradle-wrapper.jar gradle/wrapper/gradle-wrapper.properties
+            if ! git diff --cached --quiet; then
+              git commit -m "Add official Gradle wrapper 8.7 [skip ci]"
+              git pull --rebase origin HEAD || true
+              git push origin HEAD || true
+            fi
+          fi
+
       - name: Build Signed Release APK
         env:
           ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASS: ${{ secrets.ANDROID_KEY_PASS }}
         run: |
-          gradle assembleRelease --no-daemon --console=plain
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew assembleRelease --no-daemon --console=plain
+          else
+            gradle assembleRelease --no-daemon --console=plain
+          fi
           cp app/build/outputs/apk/release/app-release.apk /tmp/CCTV-Plus.apk
           sha256sum /tmp/CCTV-Plus.apk | awk '{print $1}' > /tmp/CCTV-Plus.apk.sha256
           rm -f /tmp/release.jks
@@ -89,15 +109,3 @@ jobs:
             echo "Deleting old release: $TAG"
             gh release delete "$TAG" --repo "${{ github.repository }}" --yes --cleanup-tag || true
           done
-
-      - name: Save Version Metadata to Repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -- .
-          git pull --rebase origin main || git pull --rebase origin master || true
-          APK_SHA256=$(cat /tmp/CCTV-Plus.apk.sha256)
-          printf '{"tag_name":"v2.0.%s","version_code":%s,"repo":"%s","sha256":"%s"}\n' "${{ github.run_number }}" "${{ github.run_number }}" "${{ github.repository }}" "$APK_SHA256" > version.json
-          git add version.json
-          git commit -m "Update version.json v2.0.${{ github.run_number }} [skip ci]" || true
-          git push || true
