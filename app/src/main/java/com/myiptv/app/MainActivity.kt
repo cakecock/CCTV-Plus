@@ -1723,7 +1723,23 @@ fun VodScreen(
                 onValueChange = { searchQuery = it },
                 placeholder = { Text(S.searchHint, color = theme.subtext) },
                 leadingIcon = { Icon(Icons.Default.Search, null, tint = theme.primary) },
-                trailingIcon = { if (searchQuery.isNotEmpty()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Clear, null) } },
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 6.dp)) {
+                        if (isLoadingMore && searchQuery.isNotBlank() && !isSearchResultsView) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = theme.primary
+                            )
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(32.dp)) {
+                                Icon(Icons.Default.Clear, null)
+                            }
+                        }
+                    }
+                },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onServerSearch(searchQuery) }),
