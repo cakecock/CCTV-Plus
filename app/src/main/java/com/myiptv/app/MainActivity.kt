@@ -551,9 +551,11 @@ class MainActivity : ComponentActivity() {
                     var embeddedEpg: String? = null
 
                     val activePlaylist = playlists.find { it.id == selectedPlaylistId } ?: playlists.firstOrNull()
+                    var m3uMoviesList = emptyList<VodMovie>()
                     if (activePlaylist != null && activePlaylist.url.isNotBlank()) {
                         val m3uRes = NetworkLoader.loadM3u(activePlaylist.url.trim(), this@MainActivity, forceRefresh)
                         loadedChannels.addAll(m3uRes.channels); loadedVod.addAll(m3uRes.movies)
+                        m3uMoviesList = m3uRes.movies
                         embeddedEpg = m3uRes.embeddedEpgUrl; detectedPlaylistEpgUrl = embeddedEpg
                     } else {
                         detectedPlaylistEpgUrl = null
@@ -567,7 +569,7 @@ class MainActivity : ComponentActivity() {
                         loadedChannels.addAll(stCh); loadedVod.addAll(stVod)
                     }
                     channels = loadedChannels
-                    allM3uMovies = m3uRes.movies
+                    allM3uMovies = m3uMoviesList
                     vodItems = loadedVod
                     vodFolderStack = emptyList()
                     currentVodTargetUrl = null
