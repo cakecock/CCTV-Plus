@@ -300,7 +300,33 @@ object NetworkLoader {
                                 }
                                 t.startsWith("#EXTVLCOPT:http-user-agent=", ignoreCase = true) -> ua = t.substringAfter("=").trim()
                                 t.startsWith("#EXTVLCOPT:http-referrer=", ignoreCase = true) -> referrer = t.substringAfter("=").trim()
+                                t.startsWith("#EXTVLCOPT:http-origin=", ignoreCase = true) -> if (referrer.isNullOrBlank()) referrer = t.substringAfter("=").trim()
                                 t.startsWith("#EXTVLCOPT:http-cookie=", ignoreCase = true) -> cookie = t.substringAfter("=").trim()
+                                t.startsWith("#EXTHTTP:", ignoreCase = true) -> {
+                                    runCatching {
+                                        val hObj = JSONObject(t.substringAfter(":").trim())
+                                        hObj.optString("User-Agent").takeIf { it.isNotBlank() }?.let { ua = it }
+                                        (hObj.optString("Referer").ifBlank { hObj.optString("Origin") }).takeIf { it.isNotBlank() }?.let { referrer = it }
+                                        hObj.optString("Cookie").takeIf { it.isNotBlank() }?.let { cookie = it }
+                                    }
+                                }
+                                t.startsWith("#KODIPROP:", ignoreCase = true) -> {
+                                    val prop = t.substringAfter(":").trim()
+                                    if (prop.startsWith("inputstream.adaptive.stream_headers=", ignoreCase = true)) {
+                                        val pairs = prop.substringAfter("=").split("&")
+                                        for (p in pairs) {
+                                            val k = p.substringBefore("=").trim().lowercase()
+                                            val v = runCatching { URLDecoder.decode(p.substringAfter("=", ""), "UTF-8").trim() }.getOrDefault("")
+                                            if (v.isNotEmpty()) {
+                                                when (k) {
+                                                    "user-agent" -> ua = v
+                                                    "referer", "origin" -> referrer = v
+                                                    "cookie" -> cookie = v
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 !t.startsWith("#") -> {
                                     val resolvedName = name.ifBlank {
                                         tvgNameFallback ?: epgId ?: t.substringAfterLast("/").substringBefore("?").ifBlank { "CH $num" }
@@ -316,7 +342,7 @@ object NetworkLoader {
                                     if (isVod) {
                                         movies.add(VodMovie("vod_$finalId", resolvedName, group, logo, "", "", "", t))
                                     } else {
-                                        val finalCatchup = if (catchupDays > 0) catchupDays else if (t.contains("/iptv/")) 3 else 0
+                                        val finalCatchup = catchupDays
                                         channels.add(
                                             Channel(
                                                 id = finalId,
@@ -616,12 +642,13 @@ object NetworkLoader {
     private fun parseXmlDateFast(raw: String?): Long {
         if (raw.isNullOrBlank() || raw.length < 14) return 0L
         return runCatching {
-            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+            val tzPart = raw.substring(14).trim()
+            val hasExplicitOffset = tzPart.length >= 5 && (tzPart[0] == '+' || tzPart[0] == '-')
+            val cal = Calendar.getInstance(if (hasExplicitOffset) TimeZone.getTimeZone("UTC") else TimeZone.getDefault())
             cal.set(raw.substring(0, 4).toInt(), raw.substring(4, 6).toInt() - 1, raw.substring(6, 8).toInt(), raw.substring(8, 10).toInt(), raw.substring(10, 12).toInt(), raw.substring(12, 14).toInt())
             cal.set(Calendar.MILLISECOND, 0)
             var utcMs = cal.timeInMillis
-            val tzPart = raw.substring(14).trim()
-            if (tzPart.length >= 5 && (tzPart[0] == '+' || tzPart[0] == '-')) {
+            if (hasExplicitOffset) {
                 val sign = if (tzPart[0] == '+') 1 else -1
                 val cleanTz = tzPart.substring(1).replace(":", "")
                 val offsetMs = sign * (((cleanTz.substring(0, 2).toIntOrNull() ?: 0) * 3600L + (cleanTz.substring(2, 4).toIntOrNull() ?: 0) * 60L) * 1000L)
@@ -708,7 +735,9 @@ object NetworkLoader {
                         var progStart = 0L
                         var progStop = 0L
                         var isProgInWindow = false
-                        var hasTitleForProg = false
+                        var progTitle = ""
+                        var progDesc = ""
+                        var progCategory = ""
 
                         while (eventType != XmlPullParser.END_DOCUMENT) {
                             when (eventType) {
@@ -753,22 +782,39 @@ object NetworkLoader {
                                         } else {
                                             isProgInWindow = false
                                         }
-                                        hasTitleForProg = false
+                                        progTitle = ""; progDesc = ""; progCategory = ""
                                     }
-                                    "title" -> if (progChannelId != null && isProgInWindow && !hasTitleForProg) {
-                                        val title = runCatching { parser.nextText().trim() }.getOrDefault("")
-                                        if (title.isNotEmpty()) {
-                                            val list = rawById.getOrPut(progChannelId!!) { mutableListOf() }
-                                            if (list.size < maxItemsPerChannel) {
-                                                list.add(EpgProgramItem(title, progStart, progStop, "${timeFmt.format(Date(progStart))} - ${shortTimeFmt.format(Date(progStop))}"))
-                                            }
-                                            hasTitleForProg = true
-                                        }
+                                    "title" -> if (progChannelId != null && isProgInWindow && progTitle.isEmpty()) {
+                                        progTitle = runCatching { parser.nextText().trim() }.getOrDefault("")
+                                    }
+                                    "desc" -> if (progChannelId != null && isProgInWindow && progDesc.isEmpty()) {
+                                        progDesc = runCatching { parser.nextText().trim().take(280) }.getOrDefault("")
+                                    }
+                                    "category" -> if (progChannelId != null && isProgInWindow && progCategory.isEmpty()) {
+                                        progCategory = runCatching { parser.nextText().trim().take(60) }.getOrDefault("")
                                     }
                                 }
                                 XmlPullParser.END_TAG -> when (parser.name) {
                                     "channel" -> curChannelTagId = null
-                                    "programme" -> { progChannelId = null; isProgInWindow = false; hasTitleForProg = false }
+                                    "programme" -> {
+                                        if (progChannelId != null && isProgInWindow && progTitle.isNotEmpty()) {
+                                            val list = rawById.getOrPut(progChannelId!!) { mutableListOf() }
+                                            if (list.size < maxItemsPerChannel) {
+                                                list.add(
+                                                    EpgProgramItem(
+                                                        title = progTitle,
+                                                        startMs = progStart,
+                                                        stopMs = progStop,
+                                                        timeRangeText = "${timeFmt.format(Date(progStart))} - ${shortTimeFmt.format(Date(progStop))}",
+                                                        desc = progDesc,
+                                                        category = progCategory
+                                                    )
+                                                )
+                                            }
+                                        }
+                                        progChannelId = null; isProgInWindow = false
+                                        progTitle = ""; progDesc = ""; progCategory = ""
+                                    }
                                 }
                             }
                             eventType = parser.next()
