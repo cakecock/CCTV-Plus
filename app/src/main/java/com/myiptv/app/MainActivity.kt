@@ -1188,7 +1188,6 @@ class MainActivity : ComponentActivity() {
                                                     item { PlayerActionPill(if (S.isRu) "⊞ 4 Экран" else "⊞ Multi", Color(0xFFF59E0B)) { isMultiViewMode = true } }
                                                 }
                                                 item {
-                                                    item {
                                                     val mUnit = if (S.isRu) "м" else "m"
                                                     val sLabel = if (sleepSecondsLeft > 0) "⏱ ${(sleepSecondsLeft + 59) / 60}$mUnit" else (if (S.isRu) "⏱ Сон" else "⏱ Sleep")
                                                     PlayerActionPill(sLabel, if (sleepSecondsLeft > 0) Color(0xFFF59E0B) else Color.White) { showSleepDialog = true }
@@ -1221,6 +1220,7 @@ class MainActivity : ComponentActivity() {
                                         ) {
                                             Icon(Icons.Default.SkipNext, contentDescription = if (S.isRu) "Следующий канал" else "Next channel", tint = Color.White)
                                         }
+                                    }
                                     }
 
                                     if (showTiviMateOverlay) {
