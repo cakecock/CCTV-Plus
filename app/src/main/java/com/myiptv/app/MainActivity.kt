@@ -1170,6 +1170,10 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                if (isSmartphone || controlMode == "touch") {
+                                                    item { PlayerActionPill(if (S.isRu) "⏮ Пред." else "⏮ Prev") { zapChannelStep(-1); fsInteractionTick++ } }
+                                                    item { PlayerActionPill(if (S.isRu) "⏭ След." else "⏭ Next") { zapChannelStep(1); fsInteractionTick++ } }
+                                                }
                                                 if (isSmartphone) item { PlayerActionPill(if (S.isRu) "📋 Каналы" else "📋 Channels", Color(0xFF38BDF8)) { showQuickChannelPicker = true } }
                                                 item { PlayerActionPill(if (S.isRu) "🗂 ТВ-Гид" else "🗂 Guide", Color(0xFF10B981)) { showTiviMateOverlay = true } }
                                                 if (playerEngine == 0) {
@@ -1184,11 +1188,38 @@ class MainActivity : ComponentActivity() {
                                                     item { PlayerActionPill(if (S.isRu) "⊞ 4 Экран" else "⊞ Multi", Color(0xFFF59E0B)) { isMultiViewMode = true } }
                                                 }
                                                 item {
+                                                    item {
                                                     val mUnit = if (S.isRu) "м" else "m"
                                                     val sLabel = if (sleepSecondsLeft > 0) "⏱ ${(sleepSecondsLeft + 59) / 60}$mUnit" else (if (S.isRu) "⏱ Сон" else "⏱ Sleep")
                                                     PlayerActionPill(sLabel, if (sleepSecondsLeft > 0) Color(0xFFF59E0B) else Color.White) { showSleepDialog = true }
                                                 }
                                             }
+                                        }
+                                    }
+                                    if (!isVod && (isSmartphone || controlMode == "touch") && !showTiviMateOverlay) {
+                                        IconButton(
+                                            onClick = { zapChannelStep(-1); fsInteractionTick++ },
+                                            modifier = Modifier
+                                                .align(Alignment.CenterStart)
+                                                .padding(start = 12.dp)
+                                                .size(48.dp)
+                                                .clip(RoundedCornerShape(50))
+                                                .background(Color(0x99121417))
+                                                .border(1.dp, themePalette.primary.copy(alpha = 0.45f), RoundedCornerShape(50))
+                                        ) {
+                                            Icon(Icons.Default.SkipPrevious, contentDescription = if (S.isRu) "Предыдущий канал" else "Previous channel", tint = Color.White)
+                                        }
+                                        IconButton(
+                                            onClick = { zapChannelStep(1); fsInteractionTick++ },
+                                            modifier = Modifier
+                                                .align(Alignment.CenterEnd)
+                                                .padding(end = 12.dp)
+                                                .size(48.dp)
+                                                .clip(RoundedCornerShape(50))
+                                                .background(Color(0x99121417))
+                                                .border(1.dp, themePalette.primary.copy(alpha = 0.45f), RoundedCornerShape(50))
+                                        ) {
+                                            Icon(Icons.Default.SkipNext, contentDescription = if (S.isRu) "Следующий канал" else "Next channel", tint = Color.White)
                                         }
                                     }
                                     }
