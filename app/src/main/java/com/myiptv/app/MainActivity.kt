@@ -1254,23 +1254,27 @@ class MainActivity : ComponentActivity() {
                                                 isLoading = true
                                                 val searchResults = mutableListOf<VodMovie>()
 
-                                                // 1. Поиск по VPortal (сначала в текущей папке, при пустоте — по всему порталу)
+                                                // 1. Поиск по VPortal (запрос корня с flicks и search)
                                                 if (vportalUrl.isNotBlank()) {
                                                     val res = NetworkLoader.loadVPortalNode(
                                                         rawPortalUrl = vportalUrl.trim(),
-                                                        customTargetUrl = currentVodTargetUrl,
-                                                        customRequestJson = currentVodPayloadJson,
                                                         searchQuery = cleanQ
                                                     )
-                                                    vportalDiagnostic = res.second
                                                     searchResults.addAll(res.first)
 
-                                                    if (searchResults.isEmpty() && (!currentVodTargetUrl.isNullOrBlank() || !currentVodPayloadJson.isNullOrBlank())) {
-                                                        val globalRes = NetworkLoader.loadVPortalNode(
+                                                    if (searchResults.isEmpty()) {
+                                                        val searchPayload = JSONObject().apply {
+                                                            put("cmd", "search")
+                                                            put("query", cleanQ)
+                                                            put("search", cleanQ)
+                                                            put("limit", 100)
+                                                        }.toString()
+                                                        val resSearch = NetworkLoader.loadVPortalNode(
                                                             rawPortalUrl = vportalUrl.trim(),
+                                                            customRequestJson = searchPayload,
                                                             searchQuery = cleanQ
                                                         )
-                                                        searchResults.addAll(globalRes.first)
+                                                        searchResults.addAll(resSearch.first)
                                                     }
                                                 }
 
@@ -1280,11 +1284,15 @@ class MainActivity : ComponentActivity() {
                                                     searchResults.addAll(stkMatches)
                                                 }
 
-                                                // 3. Сквозной поиск по всем фильмам M3U-плейлиста
+                                                // 3. Сквозной поиск по всей базе M3U
                                                 if (allM3uMovies.isNotEmpty()) {
                                                     val m3uMatches = allM3uMovies.filter { it.title.contains(cleanQ, ignoreCase = true) }
                                                     searchResults.addAll(m3uMatches)
                                                 }
+
+                                                // 4. Поиск среди всех уже подгруженных фильмов в памяти
+                                                val memoryMatches = vodItems.filter { !it.isFolder && it.title.contains(cleanQ, ignoreCase = true) }
+                                                searchResults.addAll(memoryMatches)
 
                                                 isLoading = false
 
@@ -1660,12 +1668,33 @@ fun VodScreen(
         vodHistory.filter { isVodAllowed(it.title, "", parentalEnabled, adultUnlockedSession) }
     }
     val isSearchResultsView = folderTitle.startsWith("🔍")
+
+    // Сканер папки: пока пользователь ищет в папке, автоматически догружаем следующие страницы в фоне
+    LaunchedEffect(searchQuery, movies.size, isLoadingMore) {
+        if (searchQuery.isNotBlank() && !isLoadingMore && !isSearchResultsView) {
+            val nextItem = movies.find { it.id.startsWith("vp_next_") }
+            if (nextItem != null) {
+                delay(200L)
+                onAutoLoadMore(nextItem)
+            }
+        }
+    }
+
     val filtered = remember(safeMovies, searchQuery, isSearchResultsView) {
         if (searchQuery.isBlank() || isSearchResultsView) safeMovies
         else safeMovies.filter { it.title.contains(searchQuery, ignoreCase = true) }
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+        if (isLoadingMore && searchQuery.isNotBlank() && !isSearchResultsView) {
+            Text(
+                if (S.isRu) "⏳ Сканирование всей папки (${safeMovies.size} фильмов)..." else "⏳ Scanning folder (${safeMovies.size} loaded)...",
+                color = theme.primary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 6.dp)
+            )
+        }
         if (safeHistory.isNotEmpty() && !canGoBack && searchQuery.isBlank()) {
             Text(if (S.isRu) "🕒 Продолжить просмотр:" else "🕒 Continue Watching:", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = theme.primary, modifier = Modifier.padding(bottom = 6.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 10.dp)) {
