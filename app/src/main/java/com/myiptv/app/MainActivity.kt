@@ -1583,9 +1583,11 @@ fun VodScreen(
                 }
             }
         }
+        val folderItemsCount = safeMovies.count { !it.id.startsWith("vp_next_") }
+        val displayedTitle = if (canGoBack && folderItemsCount > 0) "$folderTitle ($folderItemsCount)" else folderTitle
         Row(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             if (canGoBack) Button(onClick = onBackFolder, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), modifier = Modifier.padding(end = 10.dp)) { Icon(Icons.Default.ArrowBack, null); Spacer(Modifier.width(4.dp)); Text(if (S.isRu) "Назад" else "Back") }
-            Text(folderTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = theme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(displayedTitle, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = theme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (noticeMessage.isNotBlank()) Text(noticeMessage, fontSize = 12.sp, color = Color(0xFFF59E0B), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(8.dp)).background(theme.card).padding(10.dp))
         if (safeMovies.isEmpty()) {
@@ -1613,13 +1615,31 @@ fun VodScreen(
                         Box(modifier = Modifier.fillMaxWidth().height(if (movie.isFolder && movie.posterUrl.isNullOrBlank()) 85.dp else 175.dp).clip(RoundedCornerShape(10.dp)).background(theme.bg), contentAlignment = Alignment.Center) {
                             if (!movie.posterUrl.isNullOrBlank()) AsyncImage(model = movie.posterUrl, contentDescription = movie.title, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                             else Icon(if (movie.id.startsWith("vp_next_")) Icons.Default.Sync else if (movie.isFolder) Icons.Default.Folder else Icons.Default.PlayCircleFilled, null, tint = theme.primary, modifier = Modifier.size(44.dp))
+
+                            if (movie.isFolder && movie.itemCount > 0) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(6.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(theme.primary.copy(alpha = 0.92f))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text("${movie.itemCount}", color = theme.onPrimary, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
+                                }
+                            }
                         }
                         Spacer(Modifier.height(8.dp))
                         val nextLabel = if (S.isRu) "⏳ Подгрузка..." else "⏳ Loading more..."
                         Text(if (movie.id.startsWith("vp_next_")) nextLabel else movie.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = theme.text, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        val folderLabel = if (movie.itemCount > 0) {
+                            if (S.isRu) "📁 Открыть (${movie.itemCount})" else "📁 Open (${movie.itemCount})"
+                        } else {
+                            if (S.isRu) "📁 Открыть" else "📁 Open"
+                        }
                         Text(
-                            if (movie.isFolder) (if (S.isRu) "📁 Открыть" else "📁 Open") else (if (S.isRu) "▶ Смотреть" else "▶ Watch"),
-                            fontSize = 12.sp, color = theme.primary
+                            if (movie.isFolder) folderLabel else (if (S.isRu) "▶ Смотреть" else "▶ Watch"),
+                            fontSize = 12.sp, color = theme.primary, fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
